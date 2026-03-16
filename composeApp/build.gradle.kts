@@ -8,6 +8,8 @@ val localProperties = Properties().apply {
     if (file.exists()) load(file.inputStream())
 }
 val openAiApiKey: String = localProperties.getProperty("openai.api.key", "")
+val llamaModelPath: String = localProperties.getProperty("llama.model.path", "")
+val whisperModelPath: String = localProperties.getProperty("whisper.model.path", "")
 
 plugins {
     alias(libs.plugins.kotlinMultiplatform)
@@ -44,6 +46,8 @@ kotlin {
             implementation(libs.compose.uiToolingPreview)
             implementation(libs.androidx.activity.compose)
             implementation(libs.ktor.client.okhttp)
+            implementation(project(":llamaAndroidLib"))
+            implementation(project(":whisperAndroidLib"))
         }
         iosMain.dependencies {
             implementation(libs.ktor.client.darwin)
@@ -83,8 +87,15 @@ android {
         versionCode = 1
         versionName = "1.0"
         buildConfigField("String", "OPENAI_API_KEY", "\"$openAiApiKey\"")
+        buildConfigField("String", "LLAMA_MODEL_PATH", "\"$llamaModelPath\"")
+        buildConfigField("String", "WHISPER_MODEL_PATH", "\"$whisperModelPath\"")
     }
     packaging {
+        jniLibs {
+            // llamaAndroidLib und whisperAndroidLib liefern beide libomp.so aus.
+            // Wir nehmen die erste gefundene Variante, um den Merge-Konflikt zu vermeiden.
+            pickFirsts += setOf("**/libomp.so")
+        }
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }

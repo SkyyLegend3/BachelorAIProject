@@ -4,10 +4,12 @@ import androidx.lifecycle.ViewModel
 import com.example.bachelor_ai_project.core.util.PlatformFileProvider
 import com.example.bachelor_ai_project.features.form.data.AiFormMappingRepository
 import com.example.bachelor_ai_project.features.form.data.DefaultFormDefinitionProvider
+import com.example.bachelor_ai_project.features.form.data.createOnDeviceFormMappingRepository
 import com.example.bachelor_ai_project.features.form.presentation.FormViewModel
 import com.example.bachelor_ai_project.features.recording.data.RecordingRepositoryImpl
 import com.example.bachelor_ai_project.features.recording.domain.AudioRecorderFactory
 import com.example.bachelor_ai_project.features.recording.presentation.RecordingViewModel
+import com.example.bachelor_ai_project.features.transcription.data.createOnDeviceTranscriptionRepository
 import com.example.bachelor_ai_project.features.transcription.data.OpenAiTranscriptionRepository
 import com.example.bachelor_ai_project.features.transcription.presentation.TranscriptionViewModel
 import io.ktor.client.HttpClient
@@ -23,27 +25,35 @@ import io.ktor.client.HttpClient
  */
 class AppViewModel(
     recorderFactory: AudioRecorderFactory,
-    private val platformFileProvider: PlatformFileProvider,
+    platformFileProvider: PlatformFileProvider,
     httpClient: HttpClient,
     openAiApiKey: String,
 ) : ViewModel() {
 
     private val formDefinitionProvider = DefaultFormDefinitionProvider()
+    private val onDeviceTranscriptionRepository = createOnDeviceTranscriptionRepository()
+    private val onDeviceFormRepository = if (onDeviceTranscriptionRepository != null) {
+        createOnDeviceFormMappingRepository(definitionProvider = formDefinitionProvider)
+    } else {
+        null
+    }
 
     val transcriptionViewModel = TranscriptionViewModel(
-        transcriptionRepository = OpenAiTranscriptionRepository(
+        cloudTranscriptionRepository = OpenAiTranscriptionRepository(
             apiKey = openAiApiKey,
             httpClient = httpClient,
-        )
+        ),
+        onDeviceTranscriptionRepository = onDeviceTranscriptionRepository,
     )
 
     val formViewModel = FormViewModel(
         definitionProvider = formDefinitionProvider,
-        mappingRepository = AiFormMappingRepository(
+        cloudMappingRepository = AiFormMappingRepository(
             apiKey = openAiApiKey,
             httpClient = httpClient,
             definitionProvider = formDefinitionProvider,
         ),
+        onDeviceMappingRepository = onDeviceFormRepository,
     )
 
     val recordingViewModel = RecordingViewModel(
@@ -58,6 +68,10 @@ class AppViewModel(
     }
 
     init {
+        formViewModel.onAutomationModeChanged = { mode ->
+            transcriptionViewModel.setAutomationMode(mode)
+        }
+
         transcriptionViewModel.onTranscriptionResult = { response ->
             formViewModel.applyTranscript(response)
         }

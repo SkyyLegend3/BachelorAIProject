@@ -33,3 +33,19 @@ in your IDE’s toolbar or open the [/iosApp](./iosApp) directory in Xcode and r
 ---
 
 Learn more about [Kotlin Multiplatform](https://www.jetbrains.com/help/kotlin-multiplatform-dev/get-started.html)…
+
+### Android On-Device LLM (llama.cpp)
+
+Fuer die lokale Formular-Automatisierung auf Android ist eine llama.cpp-Anbindung vorhanden.
+Damit sie aktiv wird, muss ein lokales GGUF-Modell bereitliegen und in `local.properties`
+konfiguriert werden:
+
+```properties
+openai.api.key=YOUR_OPENAI_KEY
+llama.model.path=/absolute/path/to/your/model.gguf
+```
+
+Hinweise:
+- Das Modell muss unter diesem Pfad existieren und lesbar sein.
+- Der On-Device-Modus faellt automatisch auf Keyword-Mapping zurueck, falls kein Modellpfad gesetzt ist oder lokale Inferenz fehlschlaegt.
+- Fuer mobile Geraete empfiehlt sich ein kleines quantisiertes Instruct-Modell im GGUF-Format.

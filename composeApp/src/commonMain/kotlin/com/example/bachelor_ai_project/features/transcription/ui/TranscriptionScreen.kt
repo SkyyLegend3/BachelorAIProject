@@ -43,6 +43,22 @@ fun TranscriptionScreen(
             state.error != null -> TranscriptionError(message = state.error!!)
             state.hasResult -> TranscriptionResult(segments = state.segments)
         }
+
+        if (state.debugLogs.isNotEmpty()) {
+            Spacer(Modifier.height(8.dp))
+            Text(
+                text = "Transkriptions-Log",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            state.debugLogs.takeLast(6).forEach { line ->
+                Text(
+                    text = "• $line",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
     }
 }
 

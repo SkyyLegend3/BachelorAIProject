@@ -17,6 +17,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.bachelor_ai_project.features.recording.ui.RecordingScreen
 import com.example.bachelor_ai_project.features.form.ui.FormScreen
+import com.example.bachelor_ai_project.features.transcription.ui.TranscriptionScreen
 
 @Composable
 fun App() {
@@ -37,7 +38,7 @@ fun App() {
 
             Spacer(Modifier.height(16.dp))
 
-            //TranscriptionScreen(viewModel = appViewModel.transcriptionViewModel)
+            TranscriptionScreen(viewModel = appViewModel.transcriptionViewModel)
 
             Spacer(Modifier.height(16.dp))
 
