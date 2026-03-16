@@ -13,3 +13,12 @@ interface FormMappingRepository {
     suspend fun mapTranscript(response: TranscriptionResponse): AppResult<TranscriptMappingResult>
 }
 
+/**
+ * Optionale Laufzeit-Konfiguration fuer On-Device-Mapping-Repositories.
+ *
+ * Cloud-Repositories muessen dieses Interface nicht implementieren.
+ */
+interface OnDeviceFormMappingConfigurable {
+    fun setOrthographyCorrectionEnabled(enabled: Boolean)
+}
+

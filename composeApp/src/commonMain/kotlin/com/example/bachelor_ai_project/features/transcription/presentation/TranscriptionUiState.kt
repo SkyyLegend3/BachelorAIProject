@@ -9,6 +9,7 @@ data class TranscriptionUiState(
     val isLoading: Boolean = false,
     val segments: List<TranscriptSegment> = emptyList(),
     val error: String? = null,
+    val debugLogs: List<String> = emptyList(),
 ) {
     /** `true` sobald mindestens ein Segment vorhanden ist. */
     val hasResult: Boolean get() = segments.isNotEmpty()

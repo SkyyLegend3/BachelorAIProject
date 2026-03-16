@@ -13,6 +13,7 @@ import io.ktor.client.request.header
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.HttpResponse
+import io.ktor.http.HttpStatusCode
 import io.ktor.http.Headers
 import io.ktor.http.HttpHeaders
 import kotlinx.serialization.json.Json
@@ -64,7 +65,24 @@ class OpenAiTranscriptionRepository(
             }
             val bodyText = rawResponse.body<String>()
             println("DEBUG TranscriptionResponse raw: $bodyText")
-            json.decodeFromString<TranscriptionResponse>(bodyText)
+
+            if (rawResponse.status != HttpStatusCode.OK) {
+                error(
+                    "Transkription API Fehler: status=${rawResponse.status.value}, " +
+                        "audioBytes=${audioBytes.size}, body=${bodyText.take(500)}"
+                )
+            }
+
+            val decoded = json.decodeFromString<TranscriptionResponse>(bodyText)
+            val hasUsableContent = decoded.text.isNotBlank() || decoded.segments.isNotEmpty() || decoded.words.isNotEmpty()
+            if (!hasUsableContent) {
+                error(
+                    "Leere Transkriptionsantwort trotz HTTP 200: " +
+                        "audioBytes=${audioBytes.size}, body=${bodyText.take(500)}"
+                )
+            }
+
+            decoded
         }
 }
 

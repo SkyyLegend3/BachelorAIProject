@@ -32,3 +32,7 @@ dependencyResolutionManagement {
 }
 
 include(":composeApp")
+include(":llamaAndroidLib")
+project(":llamaAndroidLib").projectDir = file("llama.cpp/examples/llama.android/lib")
+include(":whisperAndroidLib")
+project(":whisperAndroidLib").projectDir = file("whisper.cpp/examples/whisper.android/lib")
