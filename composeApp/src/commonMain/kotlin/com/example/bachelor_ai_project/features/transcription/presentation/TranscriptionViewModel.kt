@@ -3,6 +3,7 @@ package com.example.bachelor_ai_project.features.transcription.presentation
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.bachelor_ai_project.core.result.AppResult
+import com.example.bachelor_ai_project.features.form.domain.FormAutomationMode
 import com.example.bachelor_ai_project.features.transcription.domain.TranscribeAudioUseCase
 import com.example.bachelor_ai_project.features.transcription.domain.TranscriptionRepository
 import com.example.bachelor_ai_project.features.transcription.domain.TranscriptionResponse
@@ -22,10 +23,17 @@ import kotlinx.coroutines.launch
  * - Ruft [onTranscriptionResult] auf, sobald ein Ergebnis vorliegt
  */
 class TranscriptionViewModel(
-    transcriptionRepository: TranscriptionRepository,
+    cloudTranscriptionRepository: TranscriptionRepository,
+    private val onDeviceTranscriptionRepository: TranscriptionRepository? = null,
 ) : ViewModel() {
 
-    private val transcribeAudio = TranscribeAudioUseCase(transcriptionRepository)
+    companion object {
+        private const val MAX_LOG_ENTRIES = 20
+    }
+
+    private val transcribeCloudAudio = TranscribeAudioUseCase(cloudTranscriptionRepository)
+    private val transcribeOnDeviceAudio = onDeviceTranscriptionRepository?.let { TranscribeAudioUseCase(it) }
+    private var automationMode: FormAutomationMode = FormAutomationMode.CLOUD
 
     /**
      * Optionaler Callback – wird nach erfolgreicher Transkription aufgerufen.
@@ -43,11 +51,33 @@ class TranscriptionViewModel(
         if (_uiState.value.isLoading) return
 
         viewModelScope.launch {
+            appendLog(
+                if (automationMode == FormAutomationMode.ON_DEVICE)
+                    "Transkriptionsmodus: On Device"
+                else
+                    "Transkriptionsmodus: Cloud"
+            )
+            appendLog("Transkription gestartet")
+            appendLog("Audio-Quelle: ${audioFilePath.takeLast(60)}")
             _uiState.update { it.copy(isLoading = true, error = null) }
 
-            when (val result = transcribeAudio(audioFilePath)) {
+            if (automationMode == FormAutomationMode.ON_DEVICE && transcribeOnDeviceAudio == null) {
+                val message = "On-Device-Transkription ist nicht verfuegbar (whisper.model.path fehlt oder ungueltig)."
+                appendLog(message)
+                _uiState.update {
+                    it.copy(isLoading = false, error = "Transkription fehlgeschlagen: $message")
+                }
+                return@launch
+            }
+
+            val useCase = activeUseCase()
+            when (val result = useCase(audioFilePath)) {
                 is AppResult.Success -> {
                     println("DEBUG TranscriptionViewModel: Transkription erfolgreich, ${result.data.segments.size} Segmente, text='${result.data.text.take(100)}'")
+                    appendLog(
+                        "Transkript-Ergebnis: textLen=${result.data.text.trim().length}, " +
+                            "segments=${result.data.segments.size}, words=${result.data.words.size}"
+                    )
                     _uiState.update {
                         it.copy(isLoading = false, segments = result.data.segments)
                     }
@@ -55,6 +85,7 @@ class TranscriptionViewModel(
                 }
                 is AppResult.Error -> {
                     println("DEBUG TranscriptionViewModel: Transkription fehlgeschlagen: ${result.message}")
+                    appendLog("Transkription fehlgeschlagen: ${result.message}")
                     _uiState.update {
                         it.copy(isLoading = false, error = "Transkription fehlgeschlagen: ${result.message}")
                     }
@@ -63,12 +94,39 @@ class TranscriptionViewModel(
         }
     }
 
+    fun setAutomationMode(mode: FormAutomationMode) {
+        if (mode == automationMode) return
+        if (mode == FormAutomationMode.ON_DEVICE && transcribeOnDeviceAudio == null) {
+            appendLog("On-Device-Transkription nicht verfuegbar, bleibe bei Cloud")
+            return
+        }
+
+        automationMode = mode
+        appendLog(
+            if (mode == FormAutomationMode.ON_DEVICE)
+                "Transkription: On Device"
+            else
+                "Transkription: Cloud"
+        )
+    }
+
     fun clearError() {
         _uiState.update { it.copy(error = null) }
     }
 
     fun reset() {
         _uiState.update { TranscriptionUiState() }
+    }
+
+    private fun appendLog(message: String) {
+        _uiState.update { current ->
+            current.copy(debugLogs = (current.debugLogs + message).takeLast(MAX_LOG_ENTRIES))
+        }
+    }
+
+    private fun activeUseCase(): TranscribeAudioUseCase = when (automationMode) {
+        FormAutomationMode.CLOUD -> transcribeCloudAudio
+        FormAutomationMode.ON_DEVICE -> transcribeOnDeviceAudio ?: transcribeCloudAudio
     }
 }
 

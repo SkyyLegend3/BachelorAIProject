@@ -1,6 +1,7 @@
 package com.example.bachelor_ai_project.features.form.presentation
 
 import com.example.bachelor_ai_project.features.form.domain.FormEntry
+import com.example.bachelor_ai_project.features.form.domain.FormAutomationMode
 import com.example.bachelor_ai_project.features.form.domain.SpeakerBlock
 
 /**
@@ -19,6 +20,10 @@ data class FormUiState(
     val speakerBlocks: List<SpeakerBlock> = emptyList(),
     val isMappingLoading: Boolean = false,
     val mappingError: String? = null,
+    val mappingLogs: List<String> = emptyList(),
+    val automationMode: FormAutomationMode = FormAutomationMode.CLOUD,
+    val supportsOnDeviceMapping: Boolean = false,
+    val onDeviceOrthographyCorrectionEnabled: Boolean = true,
     val isSubmitting: Boolean = false,
     val submitError: String? = null,
     val isSubmitted: Boolean = false,

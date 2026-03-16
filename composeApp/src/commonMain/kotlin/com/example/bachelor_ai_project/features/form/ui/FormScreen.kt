@@ -12,6 +12,8 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -20,14 +22,15 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.example.bachelor_ai_project.features.form.domain.FormAutomationMode
 import com.example.bachelor_ai_project.features.form.presentation.FormViewModel
 
 /**
  * Haupt-Composable für das Feedback-Formular.
  *
  * Zeigt alle konfigurierten Fragen als editierbare Felder an.
- * Neue Fragen werden automatisch gerendert, sobald sie im
- * [DefaultFormDefinitionProvider] eingetragen sind.
+ * Neue Fragen werden automatisch gerendert, sobald sie im Form-Definition-Provider
+ * eingetragen sind.
  * Oberhalb der Felder wird das Transkript als Sprecher-Blöcke angezeigt,
  * sofern eines vorliegt.
  */
@@ -58,6 +61,59 @@ fun FormScreen(
                 color = MaterialTheme.colorScheme.primary,
             )
 
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                ModeButton(
+                    text = "Cloud",
+                    selected = state.automationMode == FormAutomationMode.CLOUD,
+                    modifier = Modifier.weight(1f),
+                    onClick = { viewModel.setAutomationMode(FormAutomationMode.CLOUD) },
+                )
+
+                ModeButton(
+                    text = "On Device",
+                    selected = state.automationMode == FormAutomationMode.ON_DEVICE,
+                    enabled = state.supportsOnDeviceMapping,
+                    modifier = Modifier.weight(1f),
+                    onClick = { viewModel.setAutomationMode(FormAutomationMode.ON_DEVICE) },
+                )
+            }
+
+            if (!state.supportsOnDeviceMapping) {
+                Text(
+                    text = "On-Device-Mapping ist aktuell nur auf Android verfuegbar.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+
+            if (state.supportsOnDeviceMapping) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "On-Device Rechtschreibkorrektur",
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        Text(
+                            text = "Korrigiert lautnahe Whisper-Fehler vor dem Befuellen.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Switch(
+                        checked = state.onDeviceOrthographyCorrectionEnabled,
+                        onCheckedChange = viewModel::setOnDeviceOrthographyCorrectionEnabled,
+                        enabled = state.automationMode == FormAutomationMode.ON_DEVICE,
+                    )
+                }
+            }
+
             // ── Transkript-Vorschau ────────────────────────────────────────────
             if (state.isMappingLoading) {
                 Row(
@@ -70,6 +126,26 @@ fun FormScreen(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                }
+            }
+
+            if (state.mappingLogs.isNotEmpty()) {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Text(
+                        text = "Prozess-Log",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    state.mappingLogs.takeLast(6).forEach { line ->
+                        Text(
+                            text = "• $line",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
             }
 
@@ -124,3 +200,31 @@ fun FormScreen(
         }
     }
 }
+
+@Composable
+private fun ModeButton(
+    text: String,
+    selected: Boolean,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    onClick: () -> Unit,
+) {
+    if (selected) {
+        Button(
+            onClick = onClick,
+            modifier = modifier,
+            enabled = enabled,
+        ) {
+            Text(text)
+        }
+    } else {
+        OutlinedButton(
+            onClick = onClick,
+            modifier = modifier,
+            enabled = enabled,
+        ) {
+            Text(text)
+        }
+    }
+}
+

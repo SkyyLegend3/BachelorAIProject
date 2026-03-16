@@ -11,5 +11,7 @@ package com.example.bachelor_ai_project.core.config
  */
 expect object AppConfig {
     val openAiApiKey: String
+    val llamaModelPath: String
+    val whisperModelPath: String
 }
 
