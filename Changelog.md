@@ -46,6 +46,19 @@
 - `iosApp/Configuration/Config.xcconfig` um `LLAMA_MODEL_PATH` und `WHISPER_MODEL_PATH` als Build-Variablen ergaenzt.
 
 ## Android: On-Device vs. Cloud Pipeline
+- Android-Transkriptionssprache korrigiert: `whisper.cpp/examples/whisper.android/lib/src/main/jni/whisper/jni.c` setzt `params.language` wieder auf `"de"` statt `"en"`, damit On-Device-Whisper auf Deutsch transkribiert.
+- Android-Build-Alignment: `whisper.cpp/examples/whisper.android/lib/build.gradle` auf `ndkVersion 29.0.14206865` und ABI-Set `arm64-v8a/x86_64` vereinheitlicht, passend zu `llamaAndroidLib` und zur aktuellen lokalen SDK-Konfiguration.
+- Android-Packaging-Fix: `composeApp/build.gradle.kts` um `jniLibs.pickFirsts` fuer `**/libggml*.so` erweitert, damit Merge-Konflikte zwischen `llamaAndroidLib` und `whisperAndroidLib` bei nativen ggml-Binaries (z. B. `libggml.so`, `libggml-base.so`) aufgeloest werden.
+- Android-Whisper-Restore: fehlende Kernquellen in `whisper.cpp` (u. a. `CMakeLists.txt`, `src/`, `include/`, `cmake/`, `ggml/`) wiederhergestellt, damit `:whisperAndroidLib:configureCMake...` nicht mehr am fehlenden `ggml`-Source-Verzeichnis scheitert.
+- Android-Whisper-CMake-Warnung bereinigt: `whisper.cpp/examples/whisper.android/lib/src/main/jni/whisper/CMakeLists.txt` nutzt fuer `WHISPER_VERSION` kein `PARENT_SCOPE` mehr im Top-Level-Scope.
+- Android-Native-Compat-Fix: `llama.cpp/examples/llama.android/lib/src/main/cpp/logging.h` nutzt `__android_log_is_loggable` nur noch ab API 30; fuer niedrigere APIs (z. B. minSdk 24) wird auf einen Log-Level-Fallback gewechselt.
+- Android-Native-CMake-Fix: KleidiAI fuer `arm64-v8a` im wiederhergestellten `llamaAndroidLib` deaktiviert (`GGML_CPU_KLEIDIAI=OFF`), um den `FetchContent/ExternalProject`-Configure-Fehler unter CMake 3.22.x zu vermeiden.
+- Android-Native-Restore erweitert: `llama.cpp/examples/llama.android/lib/src/main/cpp/CMakeLists.txt` nutzt jetzt einen Fallback auf `iosApp/llama.cpp`, falls im Root-`llama.cpp` keine `CMakeLists.txt` mehr vorhanden ist.
+- Android-CMake-Kompatibilitaet hergestellt: `llama.cpp/examples/llama.android/lib/src/main/cpp/CMakeLists.txt` auf `cmake_minimum_required(VERSION 3.22.1)` angepasst, damit die lokale SDK-CMake-Version den Native-Configure-Schritt wieder ausfuehren kann.
+- Android-CMake-Fix: `llama.cpp/examples/llama.android/lib/build.gradle.kts` auf `cmake.version = "3.22.1"` umgestellt, da `3.31.6` lokal nicht installiert war und `:llamaAndroidLib:configureCMakeRelease[arm64-v8a]` dadurch fehlschlug.
+- Android-Build-Restore vervollstaendigt: `llama.cpp/examples/llama.android/lib/build.gradle.kts` auf `minSdk = 24` und lokal vorhandenes `ndkVersion = 29.0.14206865` angepasst, damit `:llamaAndroidLib` wieder mit `composeApp` zusammengebaut werden kann.
+- Android-Build-Restore vervollstaendigt: `whisper.cpp/examples/whisper.android/lib/build.gradle` auf `minSdk 24` angepasst, damit `:whisperAndroidLib` wieder zur `composeApp`-Manifest-Konfiguration passt (kein Merge-Fehler 24 vs 26 mehr).
+- Android-Build-Restore: `llama.cpp/examples/llama.android/lib/build.gradle.kts` von Version-Catalog-Aliases (`libs.*`) auf direkte Plugin-/Dependency-Notation umgestellt, damit das Modul als eingebundenes Subprojekt in `BachelorAIProject` wieder korrekt konfiguriert und als Variant-Provider aufgeloest wird.
 - Umschaltbare Automatisierung zwischen Cloud und On-Device fuer die Formularbefuellung eingefuehrt.
 - On-Device-Flow als eigener Pfad auf Android integriert (ohne Cloud-Abhaengigkeit fuer Mapping, wenn On-Device aktiv ist).
 
