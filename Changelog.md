@@ -2,6 +2,10 @@
 
 ## Stand: 2026-03-17
 
+## Repo/Tooling (Android + iOS)
+- `.gitignore` um `ios-llama-build/` erweitert, damit lokal generierte iOS-Llama-Buildartefakte (inkl. massiver vendor-Kopie unter `LlamaIOSFramework.docc/llama.cpp`) nicht versehentlich versioniert werden.
+- Bereits versehentlich gestagte Dateien aus `ios-llama-build/` aus dem Index entfernt; AI-/Modell-Dateien bleiben weiterhin ueber bestehende Regeln ausgeschlossen.
+
 ## Android: ANR-Fix bei "Transkript wird verarbeitet"
 - Schwere On-Device-Operationen (Whisper-Transkription, lokales Mapping und Llama-Inferenz) laufen jetzt explizit auf `Dispatchers.Default` statt im UI-Kontext.
 - Aufrufe in `TranscriptionViewModel` und `FormViewModel` wurden ebenfalls auf Hintergrundausfuehrung umgestellt, damit Compose-Rendering und Touch-Input responsiv bleiben.
