@@ -33,9 +33,73 @@
 - Prompt-Regeln erweitert: Pro Feld nur inhaltlich passende Teilsaetze uebernehmen; Off-Topic-Zusatzinhalte sollen verworfen werden.
 - Lokale Nachfilterung fuer Lernfelder hinzugefuegt: Bei gemischten Antworten wird ein irrelevanter Nachsatz (z. B. Hobby-/Vorlieben-Teil) nicht mehr bevorzugt uebernommen.
 
+## Android + iOS: TranscriptionViewModel commonMain-Fix
+- JVM-spezifische Aufrufe (`System.currentTimeMillis`, `Thread.currentThread`) im `commonMain` durch `TimeSource.Monotonic` ersetzt.
+- Konstruktor-Parameter im `TranscriptionViewModel` bereinigt und KDoc-Referenz auf nicht aufloesbares Symbol entschärft.
+- Ergebnis: `:composeApp:compileDebugKotlinAndroid` laeuft wieder erfolgreich.
+
 ## Stand: 2026-03-16
 
+## Repo/Tooling (Android + iOS)
+- `.gitignore` erweitert um große AI-Modellartefakte (`*.gguf`, `*.ggml`, `*.safetensors`, `*.ckpt`, `*.onnx`, `*.pt`, `*.pth`, `*.tflite`) sowie typische Modellpfade (`**/models/**`, `**/Resources/models/**`, `**/files/models/**`, `iosApp/whisper-base.bin`), damit große lokale Modellfiles nicht versehentlich versioniert werden.
+
+## iOS: Lokale Formularbefuellung (On-Device)
+- iOS-Whisper-Dekodierung gehaertet: `IOSWhisperBridge.swift` nutzt jetzt neben `AVAudioFile` einen robusten `AVAssetReader`-Fallback (PCM float32, 16 kHz, mono), falls `AVAudioFile` bei `.m4a` 0 Samples liefert oder mit ObjC/Foundation-Fehlern abbricht.
+- iOS-Diagnose erweitert: Audio-Dateigroesse und Decoder-Fallback-Pfad werden geloggt, damit Fehler wie `Keine Samples nach Dekodierung` besser analysierbar sind.
+- iOS-Whisper-Diagnose fuer Foundation/ObjC-Fehler erweitert: `IOSWhisperBridge.swift` loggt bei Exceptions und Audio-Read/Convert-Fehlern jetzt `NSError`-Details (`domain`, `code`, `description`), damit Fehler wie `Foundation._GenericObjCError` konkret nachvollziehbar sind.
+- iOS-Whisper-Import robuster gemacht: `IOSWhisperBridge.swift` akzeptiert jetzt sowohl `canImport(whisper)` als auch `canImport(libwhisper_all)`, damit statische XCFramework-Builds mit abweichendem Modulnamen nicht faelschlich als "nicht verlinkt" behandelt werden.
+- iOS-Startdiagnose erweitert: App-Start loggt jetzt explizit, welches Whisper-Swift-Modul erkannt wurde (`whisper`, `libwhisper_all` oder keines), um verbleibende Linking-Probleme eindeutig sichtbar zu machen.
+- iOS-Linking-Fix: `iosApp/iosApp.xcodeproj/project.pbxproj` aktualisiert, damit `whisper.xcframework` wieder in der `Frameworks`-Build-Phase des Targets `iosApp` verlinkt ist; dadurch wird `canImport(whisper)` im Swift-Bridge-Code wieder aktiv.
+- iOS-Whisper-Registrierung robust gemacht: `registerIosWhisperBridgeIfAvailable()` registriert die Bridge nun immer beim App-Start; fehlendes Modell fuehrt nur noch zu einem klaren Laufzeitfehler (statt `Bridge nicht registriert`).
+- iOS-On-Device-Fehlerdiagnose erweitert: `IOSWhisperBridge.swift` speichert jetzt den konkreten letzten Whisper-Fehlergrund (z. B. Modellpfad, Audio-Datei, Init/Konvertierung/Inference) und gibt ihn ueber `lastErrorMessage()` an KMP weiter; `TranscriptionViewModel` loggt diese Ursache explizit als `On-Device-Diagnose`.
+- iOS-On-Device-Transkriptionsmodus stabilisiert: `createDefaultOnDeviceTranscriptionRepository()` nutzt jetzt eine lazy Bridge-Aufloesung (`DeferredIosWhisperBridge`), damit On-Device nicht mehr wegen Init-Reihenfolge (Swift-Bridge noch nicht registriert) auf Cloud zurueckfaellt.
+- iOS-Whisper finalisiert auf statische Variante: `whisper.xcframework` wird jetzt aus `libwhisper_all.a` (inkl. statisch zusammengefuehrter `ggml`-Archive) erzeugt, sodass keine Runtime-Abhaengigkeit auf `libggml*.dylib` mehr besteht.
+- `iosApp/iosApp.xcodeproj/project.pbxproj`: `whisper.xcframework` wieder in `Frameworks` aktiviert (ohne Embed), damit `canImport(whisper)` und On-Device-Whisper auf iOS wieder verfuegbar sind.
+- iOS-Stabilitaetsfix: `whisper.xcframework` voruebergehend aus `Frameworks`/`CopyFiles` des iOS-Targets entfernt, um dyld-Crash durch transitive `libggml.*.dylib`-Abhaengigkeiten beim App-Start zu verhindern.
+- iOS-Dyld-Fix fuer Whisper: `libwhisper.1.8.3.dylib`-Install-Name auf `@rpath/libwhisper.1.8.3.dylib` gesetzt, damit Runtime-Lookup nicht mehr auf `@rpath/libwhisper.1.dylib` ins Leere laeuft.
+- iOS-Compile-Fix: `IOSWhisperBridge.swift` angepasst, damit `whisper_full_get_segment_t0/t1` (Int64) korrekt in der Zeitstempel-Formatierung verarbeitet werden (kein Int64->Int32-Fehler mehr).
+- iOS-Whisper-Build-Fix: `whisper.xcframework`-Header erweitert (`ggml.h`, `ggml-cpu.h`, `ggml-backend.h`, `ggml-alloc.h`) und `module.modulemap` aktualisiert, damit `import whisper` und der Clang dependency scanner auf iOS korrekt aufloesen.
+- `iosApp/iosApp.xcodeproj/project.pbxproj` erweitert: `whisper.xcframework` wird im Target `iosApp` jetzt in `Frameworks` verlinkt und ueber `CopyFiles` (CodeSignOnCopy) eingebettet.
+- iOS-Whisper-Fix: sichere C-String-Uebergabe fuer `params.language` in `IOSWhisperBridge.swift` (kein dangling Pointer mehr waehrend `whisper_full`).
+- iOS: On-Device-Whisper-Transkription strukturell aktiviert: `createOnDeviceTranscriptionRepository()` nutzt jetzt den iOS-Whisper-Provider statt `null`.
+- Neue iOS-Whisper-Bridge-Registry in Shared (`IosWhisperBridge` / `IosWhisperBridgeRegistry`) fuer Swift->KMP-Anbindung analog zur Llama-Bridge.
+- Neues iOS-Repository `OnDeviceWhisperTranscriptionRepository.ios.kt` fuer lokales Parsing von Whisper-Text/Segmenten in `TranscriptionResponse`.
+- Neue Swift-Datei `iosApp/iosApp/IOSWhisperBridge.swift` inkl. Modellpfad-Fallbacks (`WHISPER_MODEL_PATH` -> Bundle -> Documents) und App-Start-Registrierung.
+- `iosApp/iosApp/iOSApp.swift` erweitert: registriert jetzt zusaetzlich `registerIosWhisperBridgeIfAvailable()` beim Start.
+- On-Device-Formular-Mapping auf iOS aktiviert (bisher `null`-Factory ersetzt).
+- iOS nutzt jetzt denselben lokalen Mapping-Kern wie Android: LLM-JSON-Extraktion, Heuristik und Feld-Merge mit Qualitaetspruefungen.
+- iOS-Keyword-Fallback fuer Formularbefuellung hinzugefuegt, damit auch ohne verfuegbare LLM-Engine lokale Zuordnung moeglich bleibt.
+- Swift-Bridge (`iosApp/iosApp/IOSLlamaBridge.swift`) zur echten lokalen llama.cpp-Inferenz angebunden und beim App-Start in `iosApp/iosApp/iOSApp.swift` registriert.
+- Shared-iOS-Provider nutzt jetzt eine registrierbare Bridge (`IosLlmBridgeRegistry`) statt eines festen Platzhalters, damit lokale LLM-Antworten direkt in den bestehenden Mapping-Flow einfliessen.
+- `iosApp/iosApp/LibLlama.swift` aus dem llama.swiftui-Beispiel als Runtime-Basis integriert (guarded via `#if canImport(llama)`).
+- `iosApp/iosApp.xcodeproj/project.pbxproj` erweitert, sodass `llama.xcframework` im Target `iosApp` in der Frameworks-Phase verlinkt ist.
+- iOS-Dyld-Fix: `llama.xcframework` wird im Target `iosApp` zusaetzlich ueber eine `Embed Frameworks`-Phase in die App eingebettet (`CodeSignOnCopy`), damit `@rpath/llama.framework/llama` zur Laufzeit gefunden wird.
+- `iosApp/Configuration/Config.xcconfig` nutzt nun optional `#include? "Secrets.xcconfig"` fuer lokale Overrides.
+- Lokale Datei `iosApp/Configuration/Secrets.xcconfig` angelegt und `Secrets.xcconfig.template` um `LLAMA_MODEL_PATH`/`WHISPER_MODEL_PATH` erweitert.
+- Startstabilitaet verbessert: Bridge-Registrierung beim App-Start erfolgt nur noch, wenn `LLAMA_MODEL_PATH` gesetzt ist, die Datei existiert und `llama` importierbar ist.
+- UI-Fix: On-Device-Formular-Mapping ist jetzt auch auf iOS auswählbar, selbst wenn On-Device-Transkription nicht verfuegbar ist (Entkopplung von Mapping- und Transkriptions-Repository-Wiring).
+- iOS-Modellpfad-Handling erweitert: lokale Llama-Bridge sucht Modell nun in dieser Reihenfolge: `LLAMA_MODEL_PATH` (uebergeben/Info.plist) -> `model.gguf` im App-Bundle -> `Documents/models/model.gguf`.
+- iOS-Automationsmodus-Fix: Bei gewaehltem On-Device-Modus bleibt der Modus stabil; falls lokale Whisper-Transkription fehlt, wird nur die Transkription auf Cloud gefallbackt (statt den Modus auf Cloud zu erzwingen).
+- iOS-Config-Fix: `Config.xcconfig`-Include-Reihenfolge korrigiert, damit Werte aus `Secrets.xcconfig` (`OPENAI_API_KEY`, Modellpfade) die Defaults wirklich ueberschreiben.
+- iOS-UX-Fix: Die Form-Automatisierung kann auf On-Device stehen, ohne dass die Transkriptions-Logs einen nicht konfigurierten On-Device-Whisper-Pfad als aktiven Fehlerpfad anzeigen; Transkription bleibt in diesem Fall kontrolliert auf Cloud.
+- iOS-Konfiguration erweitert: `LLAMA_MODEL_PATH` und `WHISPER_MODEL_PATH` werden aus `Info.plist` gelesen (analog zu bestehendem `OPENAI_API_KEY`).
+- `iosApp/iosApp/Info.plist` um Modellpfad-Keys ergaenzt und strukturell bereinigt (duplizierte XML/Plist-Deklaration entfernt).
+- `iosApp/Configuration/Config.xcconfig` um `LLAMA_MODEL_PATH` und `WHISPER_MODEL_PATH` als Build-Variablen ergaenzt.
+
 ## Android: On-Device vs. Cloud Pipeline
+- Android-Transkriptionssprache korrigiert: `whisper.cpp/examples/whisper.android/lib/src/main/jni/whisper/jni.c` setzt `params.language` wieder auf `"de"` statt `"en"`, damit On-Device-Whisper auf Deutsch transkribiert.
+- Android-Build-Alignment: `whisper.cpp/examples/whisper.android/lib/build.gradle` auf `ndkVersion 29.0.14206865` und ABI-Set `arm64-v8a/x86_64` vereinheitlicht, passend zu `llamaAndroidLib` und zur aktuellen lokalen SDK-Konfiguration.
+- Android-Packaging-Fix: `composeApp/build.gradle.kts` um `jniLibs.pickFirsts` fuer `**/libggml*.so` erweitert, damit Merge-Konflikte zwischen `llamaAndroidLib` und `whisperAndroidLib` bei nativen ggml-Binaries (z. B. `libggml.so`, `libggml-base.so`) aufgeloest werden.
+- Android-Whisper-Restore: fehlende Kernquellen in `whisper.cpp` (u. a. `CMakeLists.txt`, `src/`, `include/`, `cmake/`, `ggml/`) wiederhergestellt, damit `:whisperAndroidLib:configureCMake...` nicht mehr am fehlenden `ggml`-Source-Verzeichnis scheitert.
+- Android-Whisper-CMake-Warnung bereinigt: `whisper.cpp/examples/whisper.android/lib/src/main/jni/whisper/CMakeLists.txt` nutzt fuer `WHISPER_VERSION` kein `PARENT_SCOPE` mehr im Top-Level-Scope.
+- Android-Native-Compat-Fix: `llama.cpp/examples/llama.android/lib/src/main/cpp/logging.h` nutzt `__android_log_is_loggable` nur noch ab API 30; fuer niedrigere APIs (z. B. minSdk 24) wird auf einen Log-Level-Fallback gewechselt.
+- Android-Native-CMake-Fix: KleidiAI fuer `arm64-v8a` im wiederhergestellten `llamaAndroidLib` deaktiviert (`GGML_CPU_KLEIDIAI=OFF`), um den `FetchContent/ExternalProject`-Configure-Fehler unter CMake 3.22.x zu vermeiden.
+- Android-Native-Restore erweitert: `llama.cpp/examples/llama.android/lib/src/main/cpp/CMakeLists.txt` nutzt jetzt einen Fallback auf `iosApp/llama.cpp`, falls im Root-`llama.cpp` keine `CMakeLists.txt` mehr vorhanden ist.
+- Android-CMake-Kompatibilitaet hergestellt: `llama.cpp/examples/llama.android/lib/src/main/cpp/CMakeLists.txt` auf `cmake_minimum_required(VERSION 3.22.1)` angepasst, damit die lokale SDK-CMake-Version den Native-Configure-Schritt wieder ausfuehren kann.
+- Android-CMake-Fix: `llama.cpp/examples/llama.android/lib/build.gradle.kts` auf `cmake.version = "3.22.1"` umgestellt, da `3.31.6` lokal nicht installiert war und `:llamaAndroidLib:configureCMakeRelease[arm64-v8a]` dadurch fehlschlug.
+- Android-Build-Restore vervollstaendigt: `llama.cpp/examples/llama.android/lib/build.gradle.kts` auf `minSdk = 24` und lokal vorhandenes `ndkVersion = 29.0.14206865` angepasst, damit `:llamaAndroidLib` wieder mit `composeApp` zusammengebaut werden kann.
+- Android-Build-Restore vervollstaendigt: `whisper.cpp/examples/whisper.android/lib/build.gradle` auf `minSdk 24` angepasst, damit `:whisperAndroidLib` wieder zur `composeApp`-Manifest-Konfiguration passt (kein Merge-Fehler 24 vs 26 mehr).
+- Android-Build-Restore: `llama.cpp/examples/llama.android/lib/build.gradle.kts` von Version-Catalog-Aliases (`libs.*`) auf direkte Plugin-/Dependency-Notation umgestellt, damit das Modul als eingebundenes Subprojekt in `BachelorAIProject` wieder korrekt konfiguriert und als Variant-Provider aufgeloest wird.
 - Umschaltbare Automatisierung zwischen Cloud und On-Device fuer die Formularbefuellung eingefuehrt.
 - On-Device-Flow als eigener Pfad auf Android integriert (ohne Cloud-Abhaengigkeit fuer Mapping, wenn On-Device aktiv ist).
 

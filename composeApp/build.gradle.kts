@@ -94,7 +94,10 @@ android {
         jniLibs {
             // llamaAndroidLib und whisperAndroidLib liefern beide libomp.so aus.
             // Wir nehmen die erste gefundene Variante, um den Merge-Konflikt zu vermeiden.
-            pickFirsts += setOf("**/libomp.so")
+            pickFirsts += setOf(
+                "**/libomp.so",
+                "**/libggml*.so",
+            )
         }
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"

@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlin.time.TimeSource
 
 /**
  * ViewModel für den Transcription-Screen.
@@ -26,7 +27,7 @@ import kotlinx.coroutines.withContext
  */
 class TranscriptionViewModel(
     cloudTranscriptionRepository: TranscriptionRepository,
-    private val onDeviceTranscriptionRepository: TranscriptionRepository? = null,
+    onDeviceTranscriptionRepository: TranscriptionRepository? = null,
 ) : ViewModel() {
 
     companion object {
@@ -39,7 +40,7 @@ class TranscriptionViewModel(
 
     /**
      * Optionaler Callback – wird nach erfolgreicher Transkription aufgerufen.
-     * Wird vom übergeordneten [AppViewModel] gesetzt.
+     * Wird vom uebergeordneten App-ViewModel gesetzt.
      */
     var onTranscriptionResult: ((TranscriptionResponse) -> Unit)? = null
 
@@ -53,8 +54,8 @@ class TranscriptionViewModel(
         if (_uiState.value.isLoading) return
 
         viewModelScope.launch {
-            val startedAt = System.currentTimeMillis()
-            appendLog("Transkriptions-Start: mode=${automationMode.name}, thread=${Thread.currentThread().name}")
+            val startedAt = TimeSource.Monotonic.markNow()
+            appendLog("Transkriptions-Start: mode=${automationMode.name}")
 
             appendLog(
                 if (automationMode == FormAutomationMode.ON_DEVICE)
@@ -66,21 +67,12 @@ class TranscriptionViewModel(
             appendLog("Audio-Quelle: ${audioFilePath.takeLast(60)}")
             _uiState.update { it.copy(isLoading = true, error = null) }
 
-            if (automationMode == FormAutomationMode.ON_DEVICE && transcribeOnDeviceAudio == null) {
-                val message = "On-Device-Transkription ist nicht verfuegbar (whisper.model.path fehlt oder ungueltig)."
-                appendLog(message)
-                _uiState.update {
-                    it.copy(isLoading = false, error = "Transkription fehlgeschlagen: $message")
-                }
-                return@launch
-            }
-
             val useCase = activeUseCase()
             val result = withContext(Dispatchers.Default) {
                 useCase(audioFilePath)
             }
 
-            val durationMs = System.currentTimeMillis() - startedAt
+            val durationMs = startedAt.elapsedNow().inWholeMilliseconds
 
             when (result) {
                 is AppResult.Success -> {
@@ -99,6 +91,9 @@ class TranscriptionViewModel(
                     println("DEBUG TranscriptionViewModel: Transkription fehlgeschlagen: ${result.message}")
                     appendLog("Transkription fehlgeschlagen: ${result.message}")
                     appendLog("Transkriptions-Ende (Fehler): ${durationMs}ms")
+                    if (automationMode == FormAutomationMode.ON_DEVICE) {
+                        appendLog("On-Device-Diagnose: ${result.message}")
+                    }
                     _uiState.update {
                         it.copy(isLoading = false, error = "Transkription fehlgeschlagen: ${result.message}")
                     }
@@ -109,10 +104,6 @@ class TranscriptionViewModel(
 
     fun setAutomationMode(mode: FormAutomationMode) {
         if (mode == automationMode) return
-        if (mode == FormAutomationMode.ON_DEVICE && transcribeOnDeviceAudio == null) {
-            appendLog("On-Device-Transkription nicht verfuegbar, bleibe bei Cloud")
-            return
-        }
 
         automationMode = mode
         appendLog(
@@ -122,6 +113,8 @@ class TranscriptionViewModel(
                 "Transkription: Cloud"
         )
     }
+
+    fun supportsOnDeviceTranscription(): Boolean = transcribeOnDeviceAudio != null
 
     fun clearError() {
         _uiState.update { it.copy(error = null) }

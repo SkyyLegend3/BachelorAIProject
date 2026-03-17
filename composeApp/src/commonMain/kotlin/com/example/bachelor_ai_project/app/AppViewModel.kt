@@ -32,11 +32,9 @@ class AppViewModel(
 
     private val formDefinitionProvider = DefaultFormDefinitionProvider()
     private val onDeviceTranscriptionRepository = createOnDeviceTranscriptionRepository()
-    private val onDeviceFormRepository = if (onDeviceTranscriptionRepository != null) {
-        createOnDeviceFormMappingRepository(definitionProvider = formDefinitionProvider)
-    } else {
-        null
-    }
+    private val onDeviceFormRepository = createOnDeviceFormMappingRepository(
+        definitionProvider = formDefinitionProvider,
+    )
 
     val transcriptionViewModel = TranscriptionViewModel(
         cloudTranscriptionRepository = OpenAiTranscriptionRepository(
@@ -69,7 +67,12 @@ class AppViewModel(
 
     init {
         formViewModel.onAutomationModeChanged = { mode ->
-            transcriptionViewModel.setAutomationMode(mode)
+            val transcriptionMode = when {
+                mode == com.example.bachelor_ai_project.features.form.domain.FormAutomationMode.ON_DEVICE &&
+                    transcriptionViewModel.supportsOnDeviceTranscription() -> mode
+                else -> com.example.bachelor_ai_project.features.form.domain.FormAutomationMode.CLOUD
+            }
+            transcriptionViewModel.setAutomationMode(transcriptionMode)
         }
 
         transcriptionViewModel.onTranscriptionResult = { response ->

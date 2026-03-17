@@ -6,8 +6,31 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		13EEF2372F693C870056A2B6 /* whisper-base.bin in Resources */ = {isa = PBXBuildFile; fileRef = 13EEF2362F693C870056A2B6 /* whisper-base.bin */; };
+		B70000010000000000000001 /* llama.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = B70000020000000000000002 /* llama.xcframework */; };
+		B70000030000000000000003 /* llama.xcframework in CopyFiles */ = {isa = PBXBuildFile; fileRef = B70000020000000000000002 /* llama.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		B70000130000000000000013 /* whisper.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = B70000120000000000000012 /* whisper.xcframework */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		B70000040000000000000004 /* CopyFiles */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 10;
+			files = (
+				B70000030000000000000003 /* llama.xcframework in CopyFiles */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
+		13EEF2362F693C870056A2B6 /* whisper-base.bin */ = {isa = PBXFileReference; lastKnownFileType = archive.macbinary; path = "whisper-base.bin"; sourceTree = "<group>"; };
 		19C296090D1C8D14860907C2 /* BachelorAIProject.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = BachelorAIProject.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		B70000020000000000000002 /* llama.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = llama.xcframework; path = "llama.cpp/build-apple/llama.xcframework"; sourceTree = "<group>"; };
+		B70000120000000000000012 /* whisper.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = whisper.xcframework; path = "whisper.cpp/build-apple/whisper.xcframework"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -41,6 +64,8 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				B70000010000000000000001 /* llama.xcframework in Frameworks */,
+				B70000130000000000000013 /* whisper.xcframework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -60,7 +85,10 @@
 			children = (
 				7351F924EB8EE85194DBDE79 /* Configuration */,
 				8C061B4E25863ADBE561C299 /* iosApp */,
+				B70000020000000000000002 /* llama.xcframework */,
+				B70000120000000000000012 /* whisper.xcframework */,
 				25C37396BEAF1CC9FC669AB2 /* Products */,
+				13EEF2362F693C870056A2B6 /* whisper-base.bin */,
 			);
 			sourceTree = "<group>";
 		};
@@ -75,6 +103,7 @@
 				BB22E26402F2C36EDCE120CF /* Sources */,
 				F6CA4ECCE0674777FD129F24 /* Frameworks */,
 				0EBD40A16E1242C9DC478D84 /* Resources */,
+				B70000040000000000000004 /* CopyFiles */,
 			);
 			buildRules = (
 			);
@@ -129,6 +158,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				13EEF2372F693C870056A2B6 /* whisper-base.bin in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -303,6 +333,7 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = iosApp/Info.plist;
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Diese App benötigt Zugriff auf das Mikrofon, um Audio aufzunehmen.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -312,6 +343,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.joshuavogt.bacheloraiproject;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -331,6 +363,7 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = iosApp/Info.plist;
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Diese App benötigt Zugriff auf das Mikrofon, um Audio aufzunehmen.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -340,6 +373,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.joshuavogt.bacheloraiproject;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";

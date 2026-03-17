@@ -18,3 +18,25 @@ captures
 !*.xcworkspace/contents.xcworkspacedata
 **/xcshareddata/WorkspaceSettings.xcsettings
 node_modules/
+
+# AI model artifacts (large files)
+*.gguf
+*.ggml
+*.safetensors
+*.ckpt
+*.onnx
+*.pt
+*.pth
+*.tflite
+
+# Typical model locations
+**/models/**
+**/Resources/models/**
+**/files/models/**
+iosApp/whisper-base.bin
+
+# Keep placeholders/docs in model folders
+!**/models/.gitkeep
+!**/models/.gitignore
+!**/models/README.md
+
