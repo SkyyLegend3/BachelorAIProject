@@ -4,17 +4,11 @@
 <dict>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-	<key>CADisableMinimumFrameDurationOnPhone</key>
-	<true/>
-	<key>NSMicrophoneUsageDescription</key>
-	<string>Diese App benötigt Zugriff auf das Mikrofon, um Audio aufzunehmen.</string>
+	<key>LLAMA_MODEL_PATH</key>
+	<string>$(LLAMA_MODEL_PATH)</string>
 	<key>OPENAI_API_KEY</key>
 	<string>$(OPENAI_API_KEY)</string>
+	<key>WHISPER_MODEL_PATH</key>
+	<string>$(WHISPER_MODEL_PATH)</string>
 </dict>
 </plist>
-
-

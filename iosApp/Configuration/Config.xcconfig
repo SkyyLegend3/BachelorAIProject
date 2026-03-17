@@ -6,8 +6,10 @@ PRODUCT_BUNDLE_IDENTIFIER=com.example.bachelor_ai_project.BachelorAIProject$(TEA
 CURRENT_PROJECT_VERSION=1
 MARKETING_VERSION=1.0
 
-// API-Key: Wert in lokaler Secrets.xcconfig setzen (NICHT einchecken)
-// Erstelle iosApp/Configuration/Secrets.xcconfig mit: OPENAI_API_KEY=sk-...
-// und include sie via: #include "Secrets.xcconfig"
+// API-Key / Modellpfade koennen lokal in Secrets.xcconfig ueberschrieben werden.
 OPENAI_API_KEY=
+LLAMA_MODEL_PATH=
+WHISPER_MODEL_PATH=
+
+#include? "Secrets.xcconfig"
 

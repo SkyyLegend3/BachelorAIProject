@@ -49,3 +49,41 @@ Hinweise:
 - Das Modell muss unter diesem Pfad existieren und lesbar sein.
 - Der On-Device-Modus faellt automatisch auf Keyword-Mapping zurueck, falls kein Modellpfad gesetzt ist oder lokale Inferenz fehlschlaegt.
 - Fuer mobile Geraete empfiehlt sich ein kleines quantisiertes Instruct-Modell im GGUF-Format.
+
+### iOS On-Device LLM (llama.cpp)
+
+Die iOS-Variante nutzt denselben On-Device-Mapping-Flow wie Android und bindet die lokale
+Inferenz ueber eine Swift-Bridge (`iosApp/iosApp/IOSLlamaBridge.swift`) an.
+
+Konfiguration in `iosApp/Configuration/Config.xcconfig` (oder lokal in `Secrets.xcconfig`):
+
+```xcconfig
+OPENAI_API_KEY=
+LLAMA_MODEL_PATH=/absolute/path/to/your/model.gguf
+WHISPER_MODEL_PATH=
+```
+
+Wichtig:
+- Das iOS-Target benoetigt ein verlinktes `llama`-Modul (z. B. aus einer `llama.xcframework`),
+  damit echte On-Device-Inferenz laeuft.
+- Ist das Modul nicht verlinkt, bleibt die App lauffaehig und nutzt weiterhin den lokalen
+  Keyword-/Heuristik-Fallback fuer die Formularbefuellung.
+
+### iOS On-Device Transkription (Whisper)
+
+Die iOS-Transkription ist nun ebenfalls auf eine lokale Bridge vorbereitet
+(`iosApp/iosApp/IOSWhisperBridge.swift`) und wird beim App-Start registriert,
+wenn ein Whisper-Modell gefunden wird.
+
+Konfiguration:
+- `WHISPER_MODEL_PATH` in `iosApp/Configuration/Config.xcconfig` oder `Secrets.xcconfig`
+- Alternativ Fallback-Suche auf iOS in dieser Reihenfolge:
+  1. `WHISPER_MODEL_PATH` (Info.plist)
+  2. `whisper-base.bin` im App-Bundle
+  3. erste Bundle-`.bin`, die "whisper" im Namen traegt
+  4. `Documents/models/whisper-base.bin`
+
+Wichtig:
+- Fuer echte lokale Inferenz muss ein `whisper`-Modul im iOS-Target verlinkt sein.
+- Ohne verlinktes Modul registriert sich die Bridge nicht; Transkription bleibt dann kontrolliert im Cloud-Pfad.
+
