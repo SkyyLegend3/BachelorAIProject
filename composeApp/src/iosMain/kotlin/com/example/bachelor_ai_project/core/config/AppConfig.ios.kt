@@ -5,7 +5,9 @@ import platform.Foundation.NSBundle
 actual object AppConfig {
     actual val openAiApiKey: String
         get() = NSBundle.mainBundle.objectForInfoDictionaryKey("OPENAI_API_KEY") as? String ?: ""
-    actual val llamaModelPath: String get() = ""
-    actual val whisperModelPath: String get() = ""
+    actual val llamaModelPath: String
+        get() = NSBundle.mainBundle.objectForInfoDictionaryKey("LLAMA_MODEL_PATH") as? String ?: ""
+    actual val whisperModelPath: String
+        get() = NSBundle.mainBundle.objectForInfoDictionaryKey("WHISPER_MODEL_PATH") as? String ?: ""
 }
 

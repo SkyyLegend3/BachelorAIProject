@@ -5,4 +5,8 @@ import com.example.bachelor_ai_project.features.form.domain.FormMappingRepositor
 
 actual fun createOnDeviceFormMappingRepository(
     definitionProvider: FormDefinitionProvider,
-): FormMappingRepository? = null
+): FormMappingRepository? = OnDeviceLlmFormMappingRepository(
+    definitionProvider = definitionProvider,
+    llmEngine = createDefaultOnDeviceLlmEngine(),
+    fallbackRepository = OnDeviceKeywordFormMappingRepository(definitionProvider),
+)
