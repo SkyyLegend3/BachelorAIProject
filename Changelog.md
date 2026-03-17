@@ -2,6 +2,9 @@
 
 ## Stand: 2026-03-16
 
+## Repo/Tooling (Android + iOS)
+- `.gitignore` erweitert um große AI-Modellartefakte (`*.gguf`, `*.ggml`, `*.safetensors`, `*.ckpt`, `*.onnx`, `*.pt`, `*.pth`, `*.tflite`) sowie typische Modellpfade (`**/models/**`, `**/Resources/models/**`, `**/files/models/**`, `iosApp/whisper-base.bin`), damit große lokale Modellfiles nicht versehentlich versioniert werden.
+
 ## iOS: Lokale Formularbefuellung (On-Device)
 - iOS-Whisper-Dekodierung gehaertet: `IOSWhisperBridge.swift` nutzt jetzt neben `AVAudioFile` einen robusten `AVAssetReader`-Fallback (PCM float32, 16 kHz, mono), falls `AVAudioFile` bei `.m4a` 0 Samples liefert oder mit ObjC/Foundation-Fehlern abbricht.
 - iOS-Diagnose erweitert: Audio-Dateigroesse und Decoder-Fallback-Pfad werden geloggt, damit Fehler wie `Keine Samples nach Dekodierung` besser analysierbar sind.
