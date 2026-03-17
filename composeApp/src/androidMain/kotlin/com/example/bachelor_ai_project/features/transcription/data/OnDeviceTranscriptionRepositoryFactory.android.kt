@@ -6,7 +6,13 @@ import com.example.bachelor_ai_project.features.transcription.domain.Transcripti
 actual fun createOnDeviceTranscriptionRepository(): TranscriptionRepository? {
     val modelPath = AppConfig.whisperModelPath.trim()
     if (modelPath.isBlank()) return null
+    if (isWhisperStubActive()) return null
 
     return OnDeviceWhisperTranscriptionRepository(modelPath = modelPath)
 }
+
+private fun isWhisperStubActive(): Boolean = runCatching {
+  val cls = Class.forName("com.whispercpp.whisper.WhisperContext")
+    cls.getDeclaredField("IS_STUB").getBoolean(null)
+}.getOrDefault(false)
 

@@ -11,7 +11,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * ViewModel für den Transcription-Screen.
@@ -51,6 +53,9 @@ class TranscriptionViewModel(
         if (_uiState.value.isLoading) return
 
         viewModelScope.launch {
+            val startedAt = System.currentTimeMillis()
+            appendLog("Transkriptions-Start: mode=${automationMode.name}, thread=${Thread.currentThread().name}")
+
             appendLog(
                 if (automationMode == FormAutomationMode.ON_DEVICE)
                     "Transkriptionsmodus: On Device"
@@ -71,13 +76,20 @@ class TranscriptionViewModel(
             }
 
             val useCase = activeUseCase()
-            when (val result = useCase(audioFilePath)) {
+            val result = withContext(Dispatchers.Default) {
+                useCase(audioFilePath)
+            }
+
+            val durationMs = System.currentTimeMillis() - startedAt
+
+            when (result) {
                 is AppResult.Success -> {
                     println("DEBUG TranscriptionViewModel: Transkription erfolgreich, ${result.data.segments.size} Segmente, text='${result.data.text.take(100)}'")
                     appendLog(
                         "Transkript-Ergebnis: textLen=${result.data.text.trim().length}, " +
                             "segments=${result.data.segments.size}, words=${result.data.words.size}"
                     )
+                    appendLog("Transkriptions-Ende: ${durationMs}ms")
                     _uiState.update {
                         it.copy(isLoading = false, segments = result.data.segments)
                     }
@@ -86,6 +98,7 @@ class TranscriptionViewModel(
                 is AppResult.Error -> {
                     println("DEBUG TranscriptionViewModel: Transkription fehlgeschlagen: ${result.message}")
                     appendLog("Transkription fehlgeschlagen: ${result.message}")
+                    appendLog("Transkriptions-Ende (Fehler): ${durationMs}ms")
                     _uiState.update {
                         it.copy(isLoading = false, error = "Transkription fehlgeschlagen: ${result.message}")
                     }
