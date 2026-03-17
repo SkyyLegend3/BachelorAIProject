@@ -67,6 +67,15 @@ android {
     }
 
     packaging {
+        jniLibs {
+            // Backup-jniLibs und CMake liefern teils dieselben nativen Binaries.
+            pickFirsts += setOf(
+                "**/libai-chat.so",
+                "**/libggml*.so",
+                "**/libllama.so",
+                "**/libomp.so",
+            )
+        }
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
@@ -89,7 +98,3 @@ dependencies {
     )
     api(libs.kotlinx.coroutines.core)
 }
-
-
-
-
