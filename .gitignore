@@ -19,6 +19,9 @@ captures
 **/xcshareddata/WorkspaceSettings.xcsettings
 node_modules/
 
+# Local iOS llama framework build output (generated/vendor content)
+ios-llama-build/
+
 # AI model artifacts (large files)
 *.gguf
 *.ggml
@@ -39,4 +42,3 @@ iosApp/whisper-base.bin
 !**/models/.gitkeep
 !**/models/.gitignore
 !**/models/README.md
-

@@ -99,12 +99,14 @@ class OnDeviceLlmFormMappingRepository(
             if (transcriptTextPlain.isBlank() && transcriptTextWithSpeakers.isBlank()) {
                 when (val fallback = fallbackRepository.mapTranscript(response)) {
                     is AppResult.Success -> {
-                        if (fallback.data.fieldAnswers.isNotEmpty()) {
-                            return@runCatchingResult fallback.data
-                        }
-                        error("Transkript ist leer (kein text/segments/words)")
+                        return@runCatchingResult fallback.data
                     }
-                    is AppResult.Error -> error("Transkript ist leer (kein text/segments/words)")
+                    is AppResult.Error -> {
+                        return@runCatchingResult TranscriptMappingResult(
+                            speakerBlocks = speakerBlocks,
+                            fieldAnswers = emptyMap(),
+                        )
+                    }
                 }
             }
 
@@ -139,6 +141,9 @@ class OnDeviceLlmFormMappingRepository(
                 - Wenn im Dialog eine Frage gestellt wird (z.B. vom Interviewer), uebernimm als Feldwert die inhaltliche Antwort des Gegenuebers, NICHT die Frage selbst.
                 - Frageformulierungen koennen variieren. Ordne nach inhaltlicher Bedeutung zur passenden Formularfrage zu.
                 - Fuer Felder, die nach Name fragen, gib nur den Namen zurueck (ohne Zusatzsaetze).
+                - Uebernimm pro Feld nur den inhaltlich passenden Teil der Antwort.
+                - Wenn eine Antwort mehrere Themen enthaelt, entferne irrelevante Teilsaetze (z. B. private Vorlieben/Hobbys), sofern sie nicht zur Formularfrage gehoeren.
+                - Wenn keine klar passende Information vorliegt, gib fuer das Feld einen leeren String zurueck.
                 ${buildOrthographyInstruction(correctionEnabled)}
             """.trimIndent()
 
@@ -183,9 +188,6 @@ class OnDeviceLlmFormMappingRepository(
                     "heuristic=${heuristicAnswers.keys} fallback=${fallbackAnswers.keys} final=${answers.keys}"
             )
             println("DEBUG OnDeviceLlmFormMappingRepository: orthographyCorrectionEnabled=$correctionEnabled")
-            if (answers.isEmpty()) {
-                error("Keine Inhalte fuer die Formularfelder erkannt")
-            }
 
             TranscriptMappingResult(
                 speakerBlocks = speakerBlocks,
@@ -382,8 +384,66 @@ class OnDeviceLlmFormMappingRepository(
     }
 
     private fun normalizeCandidateForField(field: FieldSpec, candidate: String): String {
-        if (!isNameField(field)) return candidate.trim()
+        if (!isNameField(field)) {
+            return trimIrrelevantTailForField(field = field, candidate = candidate.trim())
+        }
         return extractNameFromText(candidate) ?: candidate.trim()
+    }
+
+    private fun trimIrrelevantTailForField(field: FieldSpec, candidate: String): String {
+        if (candidate.isBlank()) return candidate
+        if (!isLearningLikeField(field)) return candidate
+
+        val clauses = candidate
+            .split(Regex("""(?i)\s*(?:,\s*)?(?:und|ausserdem|zudem|uebrigens)\s+"""))
+            .map { it.trim().trim(',', ';') }
+            .filter { it.isNotBlank() }
+
+        if (clauses.size <= 1) return candidate
+
+        val scored = clauses.map { clause -> clause to scoreClauseForField(clause, field) }
+        val best = scored.maxByOrNull { it.second } ?: return candidate
+        val bestScore = best.second
+        val secondBestScore = scored.map { it.second }.sortedDescending().getOrElse(1) { 0 }
+
+        // Nur klar besseren Teil uebernehmen, sonst Original belassen.
+        return if (bestScore >= 2 && bestScore > secondBestScore) best.first else candidate
+    }
+
+    private fun isLearningLikeField(field: FieldSpec): Boolean {
+        val idNorm = normalizeKey(field.id)
+        val labelNorm = field.normalizedLabel
+        return idNorm.contains("learn") ||
+            idNorm.contains("lesson") ||
+            labelNorm.contains("gelernt") ||
+            labelNorm.contains("lernen") ||
+            labelNorm.contains("mitgenommen") ||
+            labelNorm.contains("naechstes") ||
+            labelNorm.contains("verbessern")
+    }
+
+    private fun scoreClauseForField(clause: String, field: FieldSpec): Int {
+        val norm = normalizeKey(clause)
+        if (norm.isBlank()) return 0
+
+        var score = 0
+        field.keywords.forEach { token ->
+            if (token.isNotBlank() && norm.contains(token)) score += 2
+        }
+
+        val learningSignals = listOf(
+            "gelernt", "mitgenommen", "naechstes", "verbessern", "sollte", "werde", "kuenftig", "zukunft"
+        )
+        if (learningSignals.any { signal -> norm.contains(normalizeKey(signal)) }) {
+            score += 2
+        }
+
+        val offTopicSignals = listOf("fussball", "hobby", "mag", "liebe", "spiele", "musik", "urlaub")
+        if (offTopicSignals.any { signal -> norm.contains(normalizeKey(signal)) }) {
+            score -= 2
+        }
+
+        return score
     }
 
     private fun normalizeAnswerValue(value: String): String = value

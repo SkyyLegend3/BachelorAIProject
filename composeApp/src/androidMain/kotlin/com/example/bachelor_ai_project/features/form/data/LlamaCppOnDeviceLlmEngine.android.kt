@@ -4,10 +4,13 @@ import com.arm.aichat.AiChat
 import com.arm.aichat.InferenceEngine
 import com.arm.aichat.isModelLoaded
 import com.example.bachelor_ai_project.features.recording.domain.AppContextHolder
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import java.io.File
+import kotlin.getValue
 
 /**
  * Adapter, der llama.cpp (AiChat JNI wrapper) auf [OnDeviceLlmEngine] mappt.
@@ -23,16 +26,23 @@ class LlamaCppOnDeviceLlmEngine(
         AiChat.getInferenceEngine(AppContextHolder.applicationContext)
     }
 
-    override suspend fun completeJson(systemPrompt: String, userPrompt: String): String = mutex.withLock {
-        ensureModelFileReadable()
-        prepareFreshSession(systemPrompt)
+    override suspend fun completeJson(systemPrompt: String, userPrompt: String): String =
+        withContext(Dispatchers.Default) {
+            mutex.withLock {
+                val startedAt = System.currentTimeMillis()
+                println("DEBUG LlamaCppOnDeviceLlmEngine: start thread=${Thread.currentThread().name}")
+                ensureModelFileReadable()
+                prepareFreshSession(systemPrompt)
 
-        val buffer = StringBuilder()
-        engine.sendUserPrompt(userPrompt, predictLength).collect { token ->
-            buffer.append(token)
+                val buffer = StringBuilder()
+                engine.sendUserPrompt(userPrompt, predictLength).collect { token ->
+                    buffer.append(token)
+                }
+                val durationMs = System.currentTimeMillis() - startedAt
+                println("DEBUG LlamaCppOnDeviceLlmEngine: done in ${durationMs}ms")
+                buffer.toString()
+            }
         }
-        buffer.toString()
-    }
 
     private suspend fun prepareFreshSession(systemPrompt: String) {
         val state = engine.state.value

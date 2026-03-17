@@ -1,5 +1,47 @@
 # Changelog
 
+## Stand: 2026-03-17
+
+## Repo/Tooling (Android + iOS)
+- `.gitignore` um `ios-llama-build/` erweitert, damit lokal generierte iOS-Llama-Buildartefakte (inkl. massiver vendor-Kopie unter `LlamaIOSFramework.docc/llama.cpp`) nicht versehentlich versioniert werden.
+- Bereits versehentlich gestagte Dateien aus `ios-llama-build/` aus dem Index entfernt; AI-/Modell-Dateien bleiben weiterhin ueber bestehende Regeln ausgeschlossen.
+
+## Android: ANR-Fix bei "Transkript wird verarbeitet"
+- Schwere On-Device-Operationen (Whisper-Transkription, lokales Mapping und Llama-Inferenz) laufen jetzt explizit auf `Dispatchers.Default` statt im UI-Kontext.
+- Aufrufe in `TranscriptionViewModel` und `FormViewModel` wurden ebenfalls auf Hintergrundausfuehrung umgestellt, damit Compose-Rendering und Touch-Input responsiv bleiben.
+- Ziel: Freeze/ANR nach lokaler Transkription reduzieren, insbesondere waehrend des Zustands "Transkript wird verarbeitet".
+
+## Android: Diagnose, Timeout und Build-Stabilisierung
+- Zusaetzliches Timing-/Thread-Logging fuer On-Device-Transkription und On-Device-Mapping eingebaut (Start/Ende inkl. Dauer), um ANR-Ursachen auf Geraet besser nachvollziehen zu koennen.
+- Timeout-Schutz fuer On-Device-Mapping ergaenzt (`90s`), damit die UI nicht unbegrenzt im Zustand "Transkript wird verarbeitet" verbleibt; bei Timeout wird eine klare Fehlermeldung gesetzt.
+- Fehlende Android-Library-Module fuer `:llamaAndroidLib` und `:whisperAndroidLib` mit minimalen Stub-Implementierungen wiederhergestellt, damit Variant-Aufloesung und lokaler Compile-Pfad wieder funktionieren.
+
+## Android: Fix fuer "Transkript ist leer (kein text/segments/words)"
+- On-Device-Whisper setzt jetzt den rohen Modelltext als Fallback in `TranscriptionResponse.text`, falls keine Zeitstempel-Segmente geparst werden konnten.
+- On-Device-LLM-Mapping behandelt komplett leere Transkripte nicht mehr als harten Fehler, sondern gibt ein gueltiges leeres Mapping-Ergebnis zurueck.
+- UI-Fehlermeldung im Formular praezisiert: Bei leerem Transkript wird ein klarer Hinweis auf Aufnahme/Transkriptionspruefung angezeigt.
+
+## Android: UX-Feinschliff bei 0 Mapping-Treffern
+- Leere automatische Feldzuordnung (0 Treffer) wird nicht mehr als UI-Fehler angezeigt.
+- Stattdessen bleibt der Ablauf erfolgreich, Prozessdetails erscheinen nur im Mapping-Log.
+
+## Android: Root-Cause fuer leere On-Device-Ergebnisse abgesichert
+- Laufzeitschutz eingebaut: Wenn nur Stub-Implementierungen der nativen On-Device-Bibliotheken aktiv sind, werden On-Device-Transkription und On-Device-LLM nicht initialisiert.
+- Hintergrund: Stub-Libs liefern sofort leere/synthetische Antworten und fuehren sonst zu "0 Felder erkannt" trotz korrektem Gespraech.
+
+## Android: Schritt 1 umgesetzt - echte On-Device-Libs wieder angebunden
+- `llamaAndroidLib` und `whisperAndroidLib` nutzen jetzt die gesicherten realen Klassen (`classes.jar`) und JNI-Libs (`.so`) aus `_restore_backup/...` statt Stub-Quellcode.
+- Dadurch laufen API und Native-Layer wieder gegen die zuvor gebauten On-Device-Artefakte.
+
+## Android: On-Device-Mapping auf Relevanz verschaerft
+- Prompt-Regeln erweitert: Pro Feld nur inhaltlich passende Teilsaetze uebernehmen; Off-Topic-Zusatzinhalte sollen verworfen werden.
+- Lokale Nachfilterung fuer Lernfelder hinzugefuegt: Bei gemischten Antworten wird ein irrelevanter Nachsatz (z. B. Hobby-/Vorlieben-Teil) nicht mehr bevorzugt uebernommen.
+
+## Android + iOS: TranscriptionViewModel commonMain-Fix
+- JVM-spezifische Aufrufe (`System.currentTimeMillis`, `Thread.currentThread`) im `commonMain` durch `TimeSource.Monotonic` ersetzt.
+- Konstruktor-Parameter im `TranscriptionViewModel` bereinigt und KDoc-Referenz auf nicht aufloesbares Symbol entschärft.
+- Ergebnis: `:composeApp:compileDebugKotlinAndroid` laeuft wieder erfolgreich.
+
 ## Stand: 2026-03-16
 
 ## Repo/Tooling (Android + iOS)

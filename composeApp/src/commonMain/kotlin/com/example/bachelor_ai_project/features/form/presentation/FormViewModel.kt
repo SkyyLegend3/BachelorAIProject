@@ -15,7 +15,11 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withContext
 
 /**
  * ViewModel für den Formular-Screen.
@@ -34,6 +38,7 @@ class FormViewModel(
 
     companion object {
         private const val MAX_LOG_ENTRIES = 16
+        private const val ON_DEVICE_MAPPING_TIMEOUT_MS = 90_000L
     }
 
     private var lastTranscript: TranscriptionResponse? = null
@@ -62,6 +67,10 @@ class FormViewModel(
         lastTranscript = response
 
         viewModelScope.launch {
+            val mode = _uiState.value.automationMode
+            val startedAt = System.currentTimeMillis()
+            appendLog("Mapping-Start: mode=${mode.name}, thread=${Thread.currentThread().name}")
+
             val nonBlankSegmentCount = response.segments.count { it.text.isNotBlank() }
             val nonBlankWordCount = response.words.count { it.word.isNotBlank() }
             appendLog(
@@ -77,24 +86,40 @@ class FormViewModel(
             )
             _uiState.update { it.copy(isMappingLoading = true, mappingError = null) }
 
-            when (val result = MapTranscriptToFormUseCase(activeRepository()).invoke(response)) {
+            val result = try {
+                withContext(Dispatchers.Default) {
+                    if (mode == FormAutomationMode.ON_DEVICE) {
+                        withTimeout(ON_DEVICE_MAPPING_TIMEOUT_MS) {
+                            MapTranscriptToFormUseCase(activeRepository()).invoke(response)
+                        }
+                    } else {
+                        MapTranscriptToFormUseCase(activeRepository()).invoke(response)
+                    }
+                }
+            } catch (_: TimeoutCancellationException) {
+                appendLog("On-Device-Mapping Timeout nach ${ON_DEVICE_MAPPING_TIMEOUT_MS / 1000}s")
+                AppResult.Error(
+                    "On-Device-Mapping hat zu lange gedauert. Bitte erneut versuchen oder auf Cloud wechseln."
+                )
+            }
+
+            val durationMs = System.currentTimeMillis() - startedAt
+
+            when (result) {
                 is AppResult.Success -> {
                     val mappingResult = result.data
                     println("DEBUG FormViewModel: Mapping erfolgreich, fieldAnswers=${mappingResult.fieldAnswers}")
                     appendLog("Transkript-Debug: speakerBlocks=${mappingResult.speakerBlocks.size}")
                     if (mappingResult.fieldAnswers.isEmpty()) {
-                        appendLog("Mapping abgeschlossen, aber 0 Felder erkannt")
+                        appendLog("Mapping abgeschlossen: keine automatische Feldzuordnung erkannt")
                     } else {
                         appendLog("Mapping abgeschlossen: ${mappingResult.fieldAnswers.size} Feld(er) befuellt")
                     }
+                    appendLog("Mapping-Ende: ${durationMs}ms")
                     _uiState.update { current ->
                         current.copy(
                             isMappingLoading = false,
-                            mappingError = if (mappingResult.fieldAnswers.isEmpty()) {
-                                "Keine passenden Inhalte fuer die Formularfelder erkannt."
-                            } else {
-                                null
-                            },
+                            mappingError = null,
                             speakerBlocks = mappingResult.speakerBlocks,
                             entries = current.entries.map { entry ->
                                 val prefilled = mappingResult.fieldAnswers[entry.question.id]
@@ -110,10 +135,16 @@ class FormViewModel(
                 is AppResult.Error -> {
                     println("DEBUG FormViewModel: Mapping fehlgeschlagen: ${result.message}")
                     appendLog("Mapping fehlgeschlagen: ${result.message}")
+                    appendLog("Mapping-Ende (Fehler): ${durationMs}ms")
+                    val uiMessage = if (result.message.contains("Transkript ist leer", ignoreCase = true)) {
+                        "Kein Transkriptinhalt erkannt. Bitte Aufnahme und On-Device-Transkription pruefen."
+                    } else {
+                        "Mapping fehlgeschlagen: ${result.message}"
+                    }
                     _uiState.update {
                         it.copy(
                             isMappingLoading = false,
-                            mappingError = "Mapping fehlgeschlagen: ${result.message}",
+                            mappingError = uiMessage,
                         )
                     }
                 }

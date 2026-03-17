@@ -9,6 +9,8 @@ import com.example.bachelor_ai_project.features.transcription.domain.TranscriptS
 import com.example.bachelor_ai_project.features.transcription.domain.TranscriptionRepository
 import com.example.bachelor_ai_project.features.transcription.domain.TranscriptionResponse
 import com.whispercpp.whisper.WhisperContext
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.util.regex.Pattern
@@ -23,37 +25,48 @@ class OnDeviceWhisperTranscriptionRepository(
     private val modelPath: String,
 ) : TranscriptionRepository {
 
-    override suspend fun transcribe(audioFilePath: String): AppResult<TranscriptionResponse> = runCatchingResult {
-        val modelFile = File(modelPath)
-        require(modelFile.exists() && modelFile.isFile && modelFile.canRead()) {
-            "Whisper model file nicht lesbar: $modelPath"
+    override suspend fun transcribe(audioFilePath: String): AppResult<TranscriptionResponse> =
+        withContext(Dispatchers.Default) {
+            runCatchingResult {
+                val startedAt = System.currentTimeMillis()
+                println("DEBUG OnDeviceWhisperTranscriptionRepository: start thread=${Thread.currentThread().name}")
+                val modelFile = File(modelPath)
+                require(modelFile.exists() && modelFile.isFile && modelFile.canRead()) {
+                    "Whisper model file nicht lesbar: $modelPath"
+                }
+
+                val audioFile = File(audioFilePath)
+                require(audioFile.exists() && audioFile.isFile && audioFile.canRead()) {
+                    "Audio-Datei nicht lesbar: $audioFilePath"
+                }
+
+                val samples = decodeAudioToMono16kFloatArray(audioFile)
+                require(samples.isNotEmpty()) { "Audio-Datei enthaelt keine Samples" }
+
+                val context = WhisperContext.createContextFromFile(modelPath)
+                try {
+                    val raw = context.transcribeData(samples, printTimestamp = true).trim()
+                    val segments = parseWhisperSegments(raw)
+                    val plainText = if (segments.isNotEmpty()) {
+                        segments.joinToString(" ") { it.text.trim() }.trim()
+                    } else {
+                        raw
+                    }
+                    val durationMs = System.currentTimeMillis() - startedAt
+                    println("DEBUG OnDeviceWhisperTranscriptionRepository: done in ${durationMs}ms")
+
+                    TranscriptionResponse(
+                        text = plainText,
+                        language = "de",
+                        duration = samples.size / 16_000.0,
+                        segments = segments,
+                        words = emptyList(),
+                    )
+                } finally {
+                    context.release()
+                }
+            }
         }
-
-        val audioFile = File(audioFilePath)
-        require(audioFile.exists() && audioFile.isFile && audioFile.canRead()) {
-            "Audio-Datei nicht lesbar: $audioFilePath"
-        }
-
-        val samples = decodeAudioToMono16kFloatArray(audioFile)
-        require(samples.isNotEmpty()) { "Audio-Datei enthaelt keine Samples" }
-
-        val context = WhisperContext.createContextFromFile(modelPath)
-        try {
-            val raw = context.transcribeData(samples, printTimestamp = true).trim()
-            val segments = parseWhisperSegments(raw)
-            val plainText = segments.joinToString(" ") { it.text.trim() }.trim()
-
-            TranscriptionResponse(
-                text = plainText,
-                language = "de",
-                duration = samples.size / 16_000.0,
-                segments = segments,
-                words = emptyList(),
-            )
-        } finally {
-            context.release()
-        }
-    }
 
     private fun parseWhisperSegments(raw: String): List<TranscriptSegment> {
         if (raw.isBlank()) return emptyList()

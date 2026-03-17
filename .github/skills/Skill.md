@@ -50,7 +50,7 @@ Die App soll:
 5. die JSON-Antwort in ein internes Format bzw. in ein projektspezifisches Mapping überführen
 6. ein günstiges LLM nutzen, um Inhalte in passende Formularfelder einzuordnen
 7. die Felder in der UI anzeigen und bearbeitbar machen
-8. auf **Android und iOS** funktionieren
+8. auf **Android und iOS** funktionieren - und zwar auf realen Geräten, nicht nur im Simulator
 
 ---
 

@@ -16,7 +16,7 @@ android {
         consumerProguardFiles("consumer-rules.pro")
 
         ndk {
-             abiFilters += listOf("arm64-v8a", "x86_64")
+            abiFilters += listOf("arm64-v8a", "x86_64")
         }
         externalNativeBuild {
             cmake {
@@ -56,6 +56,16 @@ android {
         }
     }
 
+    sourceSets {
+        getByName("main") {
+            jniLibs.srcDir(
+                rootProject.file(
+                    "_restore_backup/lib_llama_broken_20260317_093717/build/intermediates/library_jni/debug/copyDebugJniLibsProjectOnly/jni"
+                )
+            )
+        }
+    }
+
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
@@ -70,10 +80,16 @@ android {
 }
 
 dependencies {
-    implementation("androidx.core:core-ktx:1.13.1")
-    implementation("androidx.datastore:datastore-preferences:1.1.1")
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
-
-    testImplementation("junit:junit:4.13.2")
-    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    api(
+        files(
+            rootProject.file(
+                "_restore_backup/lib_llama_broken_20260317_093717/build/intermediates/compile_library_classes_jar/debug/bundleLibCompileToJarDebug/classes.jar"
+            )
+        )
+    )
+    api(libs.kotlinx.coroutines.core)
 }
+
+
+
+
