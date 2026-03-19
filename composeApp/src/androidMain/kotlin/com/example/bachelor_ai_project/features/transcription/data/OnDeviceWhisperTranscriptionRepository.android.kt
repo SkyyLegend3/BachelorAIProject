@@ -30,10 +30,7 @@ class OnDeviceWhisperTranscriptionRepository(
             runCatchingResult {
                 val startedAt = System.currentTimeMillis()
                 println("DEBUG OnDeviceWhisperTranscriptionRepository: start thread=${Thread.currentThread().name}")
-                val modelFile = File(modelPath)
-                require(modelFile.exists() && modelFile.isFile && modelFile.canRead()) {
-                    "Whisper model file nicht lesbar: $modelPath"
-                }
+                val modelFile = resolveReadableModelFile()
 
                 val audioFile = File(audioFilePath)
                 require(audioFile.exists() && audioFile.isFile && audioFile.canRead()) {
@@ -43,7 +40,7 @@ class OnDeviceWhisperTranscriptionRepository(
                 val samples = decodeAudioToMono16kFloatArray(audioFile)
                 require(samples.isNotEmpty()) { "Audio-Datei enthaelt keine Samples" }
 
-                val context = WhisperContext.createContextFromFile(modelPath)
+                val context = WhisperContext.createContextFromFile(modelFile.absolutePath)
                 try {
                     val raw = context.transcribeData(samples, printTimestamp = true).trim()
                     val segments = parseWhisperSegments(raw)
@@ -67,6 +64,30 @@ class OnDeviceWhisperTranscriptionRepository(
                 }
             }
         }
+
+    private fun resolveReadableModelFile(): File {
+        val primary = File(modelPath)
+        if (primary.exists() && primary.isFile && primary.canRead()) {
+            return primary
+        }
+
+        val fallback = primary.parentFile?.let { File(it, "ggml-base.bin") }
+        if (fallback != null && fallback.exists() && fallback.isFile && fallback.canRead()) {
+            println(
+                "DEBUG OnDeviceWhisperTranscriptionRepository: fallback model verwendet: ${fallback.absolutePath}"
+            )
+            return fallback
+        }
+
+        val candidates = buildString {
+            append(primary.absolutePath)
+            if (fallback != null) {
+                append(", ")
+                append(fallback.absolutePath)
+            }
+        }
+        error("Whisper model file nicht lesbar: $candidates")
+    }
 
     private fun parseWhisperSegments(raw: String): List<TranscriptSegment> {
         if (raw.isBlank()) return emptyList()

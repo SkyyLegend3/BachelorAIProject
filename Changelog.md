@@ -1,10 +1,21 @@
 # Changelog
 
+## Stand: 2026-03-19
+
+## Android: Buildfix nach korrupten Kotlin-Datei-Headern
+- `FormViewModel.kt` bereinigt: versehentlich vorangestellter Codeblock vor der `package`-Deklaration entfernt, sodass Imports/Klasse wieder korrekt geparst werden.
+- `OnDeviceLlmFormMappingRepository.android.kt` bereinigt: fehlerhaft eingefuegter Coroutines-Code vor der `package`-Deklaration entfernt.
+- Ergebnis: `./gradlew :composeApp:compileDebugKotlinAndroid` laeuft wieder erfolgreich durch.
+
 ## Stand: 2026-03-17
 
 ## Repo/Tooling (Android + iOS)
 - `.gitignore` um `ios-llama-build/` erweitert, damit lokal generierte iOS-Llama-Buildartefakte (inkl. massiver vendor-Kopie unter `LlamaIOSFramework.docc/llama.cpp`) nicht versehentlich versioniert werden.
 - Bereits versehentlich gestagte Dateien aus `ios-llama-build/` aus dem Index entfernt; AI-/Modell-Dateien bleiben weiterhin ueber bestehende Regeln ausgeschlossen.
+
+## Android: Whisper-Modellpfad mit Fallback abgesichert
+- On-Device-Whisper prueft jetzt zuerst den konfigurierten Modellpfad (typisch `whisper-base.bin`) und faellt bei nicht lesbarer Datei automatisch auf `ggml-base.bin` im gleichen Verzeichnis zurueck.
+- Initialisierung nutzt den tatsaechlich gefundenen lesbaren Modellpfad; bei Fehlschlag werden beide geprueften Kandidaten im Fehlertext ausgegeben.
 
 ## Android: ANR-Fix bei "Transkript wird verarbeitet"
 - Schwere On-Device-Operationen (Whisper-Transkription, lokales Mapping und Llama-Inferenz) laufen jetzt explizit auf `Dispatchers.Default` statt im UI-Kontext.
