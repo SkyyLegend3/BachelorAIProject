@@ -1,5 +1,39 @@
 # Changelog
 
+## Stand: 2026-03-19
+
+## Android: On-Demand Whisper-Small Download + Modellauswahl (Android)
+- On-Device-Transkription auf Android um konfigurierbare Whisper-Modellverwaltung erweitert (Base/Small).
+- Freeze-Fix im On-Device-Form-Mapping (insb. nach Whisper-Base-Transkription): lokaler LLM-Lauf hat jetzt harte Timeouts, Prompt-Laengenlimit und faellt bei Hängern/Leerlauf sauber auf Heuristik/Keyword-Mapping zurueck statt den Ladezustand festzuhalten.
+- Zusatz-Guard gegen UI-Freezes bei sehr langen On-Device-Transkripten: lokales LLM-Mapping wird ab einer Transkriptlaenge uebersprungen und direkt mit Heuristik/Keyword-Fallback weitergemacht (Android).
+- Neues Android-Model-Management mit Persistenz der Modellwahl (SharedPreferences) eingefuehrt.
+- Optionaler Download-Flow fuer `ggml-small-q5_1.bin` implementiert (inkl. Status/Progress/Fehler im UI).
+- Neu: bevorzugte Installation aus App-Bundle-Asset (`composeApp/src/androidMain/assets/models/ggml-small-q5_1.bin`) statt Netzwerk-Download.
+- Base-Asset-Fallback ergaenzt: `models/ggml-base.bin` aus `androidMain/assets` wird jetzt als gueltige Basisquelle erkannt und bei Bedarf nach `files/models/ggml-base.bin` kopiert.
+- Dadurch bleibt die Modellverwaltungs-Card sichtbar, auch wenn `whisper.model.path` nicht auf eine lesbare Datei zeigt.
+- UX-Schritt 3 umgesetzt: eigene Modellverwaltungs-Card im Transkriptionsscreen inkl. Badge fuer das aktive Modell.
+- UI umstrukturiert: Cloud/On-Device-Auswahl aus dem Feedback-Formular in eine gemeinsame Automatisierungs-Card ueber dem Formular verschoben.
+- Whisper-Base/Small-Auswahl wird dort nur noch angezeigt, wenn `On Device` aktiv ist.
+- Kleine UI-Transition ergaenzt: Whisper-Model-Sektion erscheint/verschwindet in der Automatisierungs-Card mit leichter Fade+Expand-Animation (performant, ohne schweren Effekt).
+- Prozess-Log im Feedback-Formular erweitert: UI zeigt jetzt den zuletzt genutzten Mapping-Pfad explizit an (z. B. `Cloud-LLM`, `On-Device LLM + Heuristik/Fallback`, `On-Device Heuristik/Fallback`).
+- Android-On-Device-Diagnose erweitert: zusaetzliche Mapping-Detail-Logs in der UI (u. a. Engine-Verfuegbarkeit, Prompt-/Transkriptlaengen, LLM-Skip/Timeout/Fehlerklasse, geparste Felder, Quelle der finalen Feldzuordnung).
+- Android-On-Device-LLM-Provider gehaertet: `model.gguf` wird beim Engine-Setup vorab auf Existenz/Lesbarkeit geprueft. Bei ungueltigem Pfad wird LLM-Mapping sauber deaktiviert (mit Debug-Log) statt zur Laufzeit mit `IllegalArgumentException` im Mapping-Flow zu scheitern.
+- Schritt 2 umgesetzt (Android): Falls `llama.model.path` noch nicht existiert, versucht der LLM-Provider jetzt automatisch `models/model.gguf` aus `androidMain/assets` nach `files/models/model.gguf` zu kopieren und nutzt danach diesen Pfad.
+- Android-Stabilitaetsguard fuer On-Device-LLM: Sehr grosse GGUF-Dateien werden im LLM-Provider vorab abgefangen (Groessenlimit), damit instabile/zu schwere LLM-Inferenz den Mapping-Flow nicht blockiert; in dem Fall faellt die App kontrolliert auf Heuristik/Fallback zurueck.
+- Android-On-Device-LLM-Mapping gehaertet (Fokus Transkript-Mapping-Verarbeitung): kein erzwungenes `engine.cleanUp()+loadModel()` mehr pro Mapping-Lauf, frueher Abbruch der Token-Generierung sobald valides JSON erkannt wird, geringere Ziel-Tokenzahl (`predictLength=512`) und Session-Circuit-Breaker nach LLM-Timeout/Fehler (danach direkter Heuristik/Fallback statt erneuter Hanger).
+- Android-Runtime-Absicherung gegen Fake-/Stub-Pfade: neuer zentraler `AndroidNativeRuntimeVerifier` blockiert On-Device-Whisper und On-Device-LLM auf Emulatoren sowie bei erkannten Stub-Bibliotheken (CodeSource- und `IS_STUB`-Check), mit klaren Debug-Logs zur Ursache.
+- Android-UI-Freeze-Schutz im Formular-Mapping erweitert: LLM-Aufruf laeuft jetzt in separatem `async`-Job mit Watchdog-Timeout (`withTimeoutOrNull` auf `await()`), damit ein haengender Native-Call nicht den Mapping-Flow blockiert; bei Timeout wird auf Heuristik/Fallback gewechselt und der LLM-Circuit geoeffnet.
+- FormViewModel-Mapping-Lauf gehaertet: eigener Run-Watchdog mit `async+withTimeoutOrNull`, periodische Heartbeat-Logs waehrend On-Device-Mapping und Stale-Run-Schutz (spaete Ergebnisse alter Runs werden verworfen), damit die UI nicht dauerhaft auf "Transkript wird verarbeitet" bleibt.
+- Android-On-Device-LLM-Aufruf weiter isoliert: statt nur Coroutine-Timeout wird der LLM-Call jetzt in einem separaten Worker-Thread als `Future` mit hartem `get(timeout)` ausgefuehrt; bei Timeout wird der Future aktiv gecancelt und direkt auf Heuristik/Fallback gewechselt.
+- FormViewModel-Resilienz erweitert: Heartbeat und Mapping-Notbremse laufen als unabhängige Sibling-Coroutines (nicht als Child des Mapping-Runs), damit ein Heartbeat-Fehler den Run nicht cancelt; zusaetzlich wird ein haengender On-Device-Mapping-UI-Zustand nach Timeout sicher zurueckgesetzt.
+- Dispatcher-Fix im Mapping-Monitoring: Heartbeat/Notbremse laufen nicht mehr auf dem Main-Thread, sondern auf `Dispatchers.Default`, damit die Ueberwachung selbst keine UI-Blockade verursacht.
+- Transkriptions-Repository waehlt zur Laufzeit das aktive lokale Modell und nutzt weiterhin den bestehenden Cloud/On-Device-Ablauf.
+- Build-/Config-Erweiterung: neue Property `whisper.small.model.download.url` aus `local.properties` in `BuildConfig` verfuegbar.
+
+## iOS + Android: FormViewModel commonMain Compile-Fix
+- JVM-spezifische Aufrufe in `FormViewModel` (`System.currentTimeMillis`, `Thread.currentThread`) durch multiplatformfaehiges Timing (`TimeSource.Monotonic`) ersetzt.
+- Ergebnis: `:composeApp:compileKotlinIosSimulatorArm64` laeuft wieder, ohne commonMain-Referenzfehler.
+
 ## Stand: 2026-03-17
 
 ## Repo/Tooling (Android + iOS)

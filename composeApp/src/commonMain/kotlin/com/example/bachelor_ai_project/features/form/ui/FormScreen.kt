@@ -12,7 +12,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -60,34 +59,6 @@ fun FormScreen(
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.primary,
             )
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                ModeButton(
-                    text = "Cloud",
-                    selected = state.automationMode == FormAutomationMode.CLOUD,
-                    modifier = Modifier.weight(1f),
-                    onClick = { viewModel.setAutomationMode(FormAutomationMode.CLOUD) },
-                )
-
-                ModeButton(
-                    text = "On Device",
-                    selected = state.automationMode == FormAutomationMode.ON_DEVICE,
-                    enabled = state.supportsOnDeviceMapping,
-                    modifier = Modifier.weight(1f),
-                    onClick = { viewModel.setAutomationMode(FormAutomationMode.ON_DEVICE) },
-                )
-            }
-
-            if (!state.supportsOnDeviceMapping) {
-                Text(
-                    text = "On-Device-Mapping ist aktuell nur auf Android verfuegbar.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
 
             if (state.supportsOnDeviceMapping) {
                 Row(
@@ -149,6 +120,14 @@ fun FormScreen(
                 }
             }
 
+            state.lastMappingProcess?.let { process ->
+                Text(
+                    text = "Zuordnung: $process",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+
             state.mappingError?.let { error ->
                 Text(
                     text = error,
@@ -201,30 +180,4 @@ fun FormScreen(
     }
 }
 
-@Composable
-private fun ModeButton(
-    text: String,
-    selected: Boolean,
-    modifier: Modifier = Modifier,
-    enabled: Boolean = true,
-    onClick: () -> Unit,
-) {
-    if (selected) {
-        Button(
-            onClick = onClick,
-            modifier = modifier,
-            enabled = enabled,
-        ) {
-            Text(text)
-        }
-    } else {
-        OutlinedButton(
-            onClick = onClick,
-            modifier = modifier,
-            enabled = enabled,
-        ) {
-            Text(text)
-        }
-    }
-}
 

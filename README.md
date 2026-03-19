@@ -50,6 +50,37 @@ Hinweise:
 - Der On-Device-Modus faellt automatisch auf Keyword-Mapping zurueck, falls kein Modellpfad gesetzt ist oder lokale Inferenz fehlschlaegt.
 - Fuer mobile Geraete empfiehlt sich ein kleines quantisiertes Instruct-Modell im GGUF-Format.
 
+### Android On-Device Transkription (Whisper Base + Small)
+
+Android kann jetzt zwischen zwei lokalen Whisper-Modellen umschalten:
+- `whisper-base.bin` (bestehender Standard)
+- `ggml-small-q5_1.bin` (optional, wird bei Bedarf heruntergeladen)
+
+Bevorzugter Weg (projektweit, ohne Mac-spezifischen Pfad):
+
+1. Datei in das Projekt legen:
+   - `composeApp/src/androidMain/assets/models/ggml-small-q5_1.bin`
+2. App starten und im Bereich Transkription auf
+   - `Whisper Small aus App-Bundle installieren` tippen
+3. Danach auf Modell `Small` umschalten
+
+Damit ist kein externer Download noetig und der Flow funktioniert auf jedem Build,
+in dem die Asset-Datei enthalten ist.
+
+Konfiguration in `local.properties`:
+
+```properties
+whisper.model.path=/data/user/0/com.example.bachelor_ai_project/files/models/whisper-base.bin
+whisper.small.model.download.url=https://<dein-server>/ggml-small-q5_1.bin
+```
+
+Hinweise:
+- Das Small-Modell wird **nicht** mit der App ausgeliefert, um Speicher zu sparen.
+- Falls die Datei im App-Bundle vorhanden ist, wird sie bevorzugt daraus installiert.
+- Download und Modellauswahl erfolgen in der App im Bereich "Transkription" (On-Device).
+- `whisper.small.model.download.url` ist nur als Fallback noetig, wenn kein Bundle-Asset vorhanden ist.
+- Die URL muss vom Android-Geraet erreichbar sein (z. B. lokaler Dev-Server oder Backend-Static-File-Hosting).
+
 ### iOS On-Device LLM (llama.cpp)
 
 Die iOS-Variante nutzt denselben On-Device-Mapping-Flow wie Android und bindet die lokale

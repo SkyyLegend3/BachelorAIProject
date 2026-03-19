@@ -4,15 +4,18 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.bachelor_ai_project.core.result.AppResult
 import com.example.bachelor_ai_project.features.form.domain.FormAutomationMode
+import com.example.bachelor_ai_project.features.transcription.domain.OnDeviceTranscriptionConfigurable
 import com.example.bachelor_ai_project.features.transcription.domain.TranscribeAudioUseCase
 import com.example.bachelor_ai_project.features.transcription.domain.TranscriptionRepository
 import com.example.bachelor_ai_project.features.transcription.domain.TranscriptionResponse
+import com.example.bachelor_ai_project.features.transcription.domain.WhisperLocalModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.withContext
 import kotlin.time.TimeSource
 
@@ -36,6 +39,7 @@ class TranscriptionViewModel(
 
     private val transcribeCloudAudio = TranscribeAudioUseCase(cloudTranscriptionRepository)
     private val transcribeOnDeviceAudio = onDeviceTranscriptionRepository?.let { TranscribeAudioUseCase(it) }
+    private val onDeviceConfigurableRepository = onDeviceTranscriptionRepository as? OnDeviceTranscriptionConfigurable
     private var automationMode: FormAutomationMode = FormAutomationMode.CLOUD
 
     /**
@@ -46,6 +50,16 @@ class TranscriptionViewModel(
 
     private val _uiState = MutableStateFlow(TranscriptionUiState())
     val uiState: StateFlow<TranscriptionUiState> = _uiState.asStateFlow()
+
+    init {
+        if (onDeviceConfigurableRepository != null) {
+            viewModelScope.launch {
+                onDeviceConfigurableRepository.modelState.collectLatest { modelState ->
+                    _uiState.update { it.copy(onDeviceModelState = modelState) }
+                }
+            }
+        }
+    }
 
     /**
      * Startet die Transkription für die angegebene Audiodatei.
@@ -116,8 +130,20 @@ class TranscriptionViewModel(
 
     fun supportsOnDeviceTranscription(): Boolean = transcribeOnDeviceAudio != null
 
-    fun clearError() {
-        _uiState.update { it.copy(error = null) }
+    fun selectOnDeviceModel(model: WhisperLocalModel) {
+        if (onDeviceConfigurableRepository == null) return
+        viewModelScope.launch {
+            onDeviceConfigurableRepository.selectModel(model)
+            appendLog("Whisper-Modell gewaehlt: ${model.name}")
+        }
+    }
+
+    fun prepareOnDeviceSmallModel() {
+        if (onDeviceConfigurableRepository == null) return
+        viewModelScope.launch {
+            appendLog("Whisper Small Bereitstellung angefordert")
+            onDeviceConfigurableRepository.prepareSmallModel()
+        }
     }
 
     fun reset() {

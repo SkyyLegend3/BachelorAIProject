@@ -9,5 +9,7 @@ actual object AppConfig {
         get() = NSBundle.mainBundle.objectForInfoDictionaryKey("LLAMA_MODEL_PATH") as? String ?: ""
     actual val whisperModelPath: String
         get() = NSBundle.mainBundle.objectForInfoDictionaryKey("WHISPER_MODEL_PATH") as? String ?: ""
+    actual val whisperSmallModelDownloadUrl: String
+        get() = NSBundle.mainBundle.objectForInfoDictionaryKey("WHISPER_SMALL_MODEL_DOWNLOAD_URL") as? String ?: ""
 }
 

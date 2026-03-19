@@ -1,5 +1,7 @@
 package com.example.bachelor_ai_project.features.form.domain
 
+import com.example.bachelor_ai_project.features.transcription.domain.TranscriptionResponse
+
 /**
  * Ein zusammengefasster Redeblock eines Sprechers aus dem Transkript.
  *
@@ -20,9 +22,13 @@ data class SpeakerBlock(
  *
  * @param speakerBlocks  Strukturierte Sprecher-Blöcke aus dem Transkript (für UI-Anzeige).
  * @param fieldAnswers   Map `questionId → vorausgefüllter Text` aus der KI-Zuordnung.
+ * @param processLog     Kurzbeschreibung des verwendeten Mapping-Pfads (z.B. LLM/Heuristik).
+ * @param processDetails Detaillierte Diagnose-Logs zum Mapping-Pfad (für UI-Debug-Ausgabe).
  */
 data class TranscriptMappingResult(
     val speakerBlocks: List<SpeakerBlock>,
     val fieldAnswers: Map<String, String>,
+    val processLog: String? = null,
+    val processDetails: List<String> = emptyList(),
 )
 

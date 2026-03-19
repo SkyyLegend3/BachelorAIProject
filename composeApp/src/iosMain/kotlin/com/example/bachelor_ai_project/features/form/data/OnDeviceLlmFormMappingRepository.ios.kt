@@ -171,6 +171,11 @@ class OnDeviceLlmFormMappingRepository(
             }
 
             val sanitizedLlmAnswers = sanitizeLlmAnswers(llmAnswers)
+            val processLog = if (sanitizedLlmAnswers.isNotEmpty()) {
+                "On-Device LLM + Heuristik/Fallback"
+            } else {
+                "On-Device Heuristik/Fallback"
+            }
             val answers = mergeAnswersPerField(
                 llmAnswers = sanitizedLlmAnswers,
                 heuristicAnswers = heuristicAnswers,
@@ -189,6 +194,7 @@ class OnDeviceLlmFormMappingRepository(
             TranscriptMappingResult(
                 speakerBlocks = speakerBlocks,
                 fieldAnswers = answers,
+                processLog = processLog,
             )
         }
 

@@ -42,3 +42,4 @@ iosApp/whisper-base.bin
 !**/models/.gitkeep
 !**/models/.gitignore
 !**/models/README.md
+!composeApp/src/androidMain/assets/models/ggml-small-q5_1.bin

@@ -20,6 +20,7 @@ data class FormUiState(
     val speakerBlocks: List<SpeakerBlock> = emptyList(),
     val isMappingLoading: Boolean = false,
     val mappingError: String? = null,
+    val lastMappingProcess: String? = null,
     val mappingLogs: List<String> = emptyList(),
     val automationMode: FormAutomationMode = FormAutomationMode.CLOUD,
     val supportsOnDeviceMapping: Boolean = false,

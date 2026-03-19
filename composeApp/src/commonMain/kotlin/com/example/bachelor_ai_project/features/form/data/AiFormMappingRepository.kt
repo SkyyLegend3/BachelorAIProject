@@ -151,6 +151,7 @@ class AiFormMappingRepository(
         TranscriptMappingResult(
             speakerBlocks = speakerBlocks,
             fieldAnswers = filteredAnswers,
+            processLog = "Cloud-LLM",
         )
     }
 }

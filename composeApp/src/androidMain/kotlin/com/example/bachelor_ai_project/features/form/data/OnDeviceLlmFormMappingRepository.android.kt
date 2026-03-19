@@ -9,11 +9,18 @@ import com.example.bachelor_ai_project.features.form.domain.OnDeviceFormMappingC
 import com.example.bachelor_ai_project.features.form.domain.TranscriptMappingResult
 import com.example.bachelor_ai_project.features.form.domain.TranscriptToFormMapper
 import com.example.bachelor_ai_project.features.transcription.domain.TranscriptionResponse
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 
 /**
  * Android-On-Device-Repository fuer lokales LLM-Mapping.
@@ -26,6 +33,12 @@ class OnDeviceLlmFormMappingRepository(
     private val llmEngine: OnDeviceLlmEngine?,
     private val fallbackRepository: FormMappingRepository,
 ) : FormMappingRepository, OnDeviceFormMappingConfigurable {
+
+    companion object {
+        private const val LLM_TIMEOUT_MS = 45_000L
+        private const val MAX_TRANSCRIPT_CHARS_FOR_LLM = 6_000
+        private const val LLM_SKIP_THRESHOLD_CHARS = 2_500
+    }
 
     private data class FieldSpec(
         val id: String,
@@ -61,6 +74,8 @@ class OnDeviceLlmFormMappingRepository(
         .joinToString("|")
     @Volatile
     private var orthographyCorrectionEnabled: Boolean = true
+    @Volatile
+    private var llmCircuitOpen: Boolean = false
 
     override fun setOrthographyCorrectionEnabled(enabled: Boolean) {
         orthographyCorrectionEnabled = enabled
@@ -69,6 +84,9 @@ class OnDeviceLlmFormMappingRepository(
     override suspend fun mapTranscript(response: TranscriptionResponse): AppResult<TranscriptMappingResult> {
         val correctionEnabled = orthographyCorrectionEnabled
         val primaryResult = runCatchingResult {
+            val processDetails = mutableListOf<String>()
+            processDetails += "LLM-Engine: ${if (llmEngine != null) "verfuegbar" else "nicht verfuegbar"}"
+
             val speakerBlocks = mapper.map(response).speakerBlocks
             val transcriptTextWithSpeakers = if (speakerBlocks.isNotEmpty()) {
                 speakerBlocks.joinToString("\n") { block ->
@@ -96,24 +114,51 @@ class OnDeviceLlmFormMappingRepository(
                 }
             }
 
+            processDetails +=
+                "Transkript: textLen=${response.text.trim().length}, plainLen=${transcriptTextPlain.length}, " +
+                    "segments=${response.segments.size}, words=${response.words.size}, speakerBlocks=${speakerBlocks.size}"
+
             if (transcriptTextPlain.isBlank() && transcriptTextWithSpeakers.isBlank()) {
+                processDetails += "Frueher Abbruch: Transkriptinhalt leer"
                 when (val fallback = fallbackRepository.mapTranscript(response)) {
                     is AppResult.Success -> {
-                        return@runCatchingResult fallback.data
+                        return@runCatchingResult fallback.data.copy(
+                            processLog = fallback.data.processLog ?: "On-Device Heuristik/Fallback (leeres Transkript)",
+                            processDetails = fallback.data.processDetails + processDetails + "Fallback-Ergebnis: ${fallback.data.fieldAnswers.size} Feld(er)",
+                        )
                     }
                     is AppResult.Error -> {
                         return@runCatchingResult TranscriptMappingResult(
                             speakerBlocks = speakerBlocks,
                             fieldAnswers = emptyMap(),
+                            processLog = "On-Device Heuristik (leeres Transkript)",
+                            processDetails = processDetails + "Fallback-Fehler: ${fallback.message}",
                         )
                     }
                 }
             }
 
+            val transcriptForExtraction = if (transcriptTextPlain.isNotBlank()) {
+                transcriptTextPlain
+            } else {
+                transcriptTextWithSpeakers
+            }
+
             val heuristicAnswers = extractHeuristicAnswers(
-                transcriptText = if (transcriptTextPlain.isNotBlank()) transcriptTextPlain else transcriptTextWithSpeakers,
+                transcriptText = transcriptForExtraction,
                 speakerBlocks = speakerBlocks,
             )
+
+            val transcriptForLlm = if (transcriptForExtraction.length > MAX_TRANSCRIPT_CHARS_FOR_LLM) {
+                println(
+                    "DEBUG OnDeviceLlmFormMappingRepository: Transkript fuer LLM von " +
+                        "${transcriptForExtraction.length} auf ${MAX_TRANSCRIPT_CHARS_FOR_LLM} Zeichen gekuerzt"
+                )
+                processDetails += "LLM-Input gekuerzt: ${transcriptForExtraction.length} -> $MAX_TRANSCRIPT_CHARS_FOR_LLM Zeichen"
+                transcriptForExtraction.take(MAX_TRANSCRIPT_CHARS_FOR_LLM)
+            } else {
+                transcriptForExtraction
+            }
 
             val questionsDescription = definitionProvider.questions.joinToString("\n") { q ->
                 "- ${q.id}: ${q.label}"
@@ -155,33 +200,85 @@ class OnDeviceLlmFormMappingRepository(
 
                 Transkript (zwischen den Tags):
                 <transkript>
-                ${if (transcriptTextWithSpeakers.isNotBlank()) transcriptTextWithSpeakers else transcriptTextPlain}
+                $transcriptForLlm
                 </transkript>
 
                 Antworte jetzt strikt im JSON-Schema.
             """.trimIndent()
 
-            val llmAnswers = llmEngine?.let { engine ->
-                runCatching {
-                    val raw = engine.completeJson(systemPrompt = systemPrompt, userPrompt = userPrompt)
-                    extractAnswers(raw)
-                }.getOrElse { error ->
-                    println("DEBUG OnDeviceLlmFormMappingRepository: LLM-Fehler, nutze Heuristik/Fallback: ${error.message}")
+            var processLog = "On-Device Heuristik/Fallback"
+
+            val llmAnswers = if (llmCircuitOpen) {
+                processLog = "On-Device Heuristik/Fallback (LLM Circuit Open)"
+                processDetails += "LLM-Skip: Circuit Open nach vorherigem Timeout/Fehler"
+                emptyMap()
+            } else if (transcriptForExtraction.length > LLM_SKIP_THRESHOLD_CHARS) {
+                println(
+                    "DEBUG OnDeviceLlmFormMappingRepository: Ueberspringe LLM bei langem Transkript " +
+                        "(${transcriptForExtraction.length} Zeichen), nutze Heuristik/Fallback"
+                )
+                processLog = "On-Device Heuristik/Fallback (LLM uebersprungen: langes Transkript)"
+                processDetails += "LLM-Skip: transcriptLen=${transcriptForExtraction.length} > threshold=$LLM_SKIP_THRESHOLD_CHARS"
+                emptyMap()
+            } else {
+                llmEngine?.let { engine ->
+                    try {
+                        processDetails += "LLM-Start: transcriptForLlmLen=${transcriptForLlm.length}, systemPromptLen=${systemPrompt.length}, userPromptLen=${userPrompt.length}"
+                        val raw = invokeLlmWithHardTimeout(
+                            engine = engine,
+                            systemPrompt = systemPrompt,
+                            userPrompt = userPrompt,
+                            timeoutMs = LLM_TIMEOUT_MS,
+                        )
+
+                        if (raw.isNullOrBlank()) {
+                            println(
+                                "DEBUG OnDeviceLlmFormMappingRepository: LLM-Timeout/leer nach " +
+                                    "${LLM_TIMEOUT_MS / 1000}s, nutze Heuristik/Fallback"
+                            )
+                            processLog = "On-Device Heuristik/Fallback (LLM Timeout/leer)"
+                            processDetails += "LLM-Ergebnis: timeoutOderLeer nach ${LLM_TIMEOUT_MS / 1000}s"
+                            llmCircuitOpen = true
+                            emptyMap()
+                        } else {
+                            val parsed = extractAnswers(raw)
+                            processDetails += "LLM-Ergebnis: rawLen=${raw.length}, parsedFields=${parsed.size}"
+                            parsed
+                        }
+                    } catch (cancellation: CancellationException) {
+                        throw cancellation
+                    } catch (error: Throwable) {
+                        println("DEBUG OnDeviceLlmFormMappingRepository: LLM-Fehler, nutze Heuristik/Fallback: ${error.message}")
+                        processLog = "On-Device Heuristik/Fallback (LLM Fehler)"
+                        processDetails += "LLM-Fehler: ${error::class.simpleName}: ${error.message ?: "ohne Nachricht"}"
+                        llmCircuitOpen = true
+                        emptyMap()
+                    }
+                } ?: run {
+                    processDetails += "LLM-Skip: keine On-Device-LLM-Engine konfiguriert"
                     emptyMap()
                 }
-            } ?: emptyMap()
+            }
 
             val fallbackAnswers = when (val fallback = fallbackRepository.mapTranscript(response)) {
                 is AppResult.Success -> fallback.data.fieldAnswers
                 is AppResult.Error -> emptyMap()
             }
+            processDetails += "Antwortquellen: llm=${llmAnswers.size}, heuristic=${heuristicAnswers.size}, fallback=${fallbackAnswers.size}"
 
             val sanitizedLlmAnswers = sanitizeLlmAnswers(llmAnswers)
+            if (sanitizedLlmAnswers.isNotEmpty()) {
+                processLog = "On-Device LLM + Heuristik/Fallback"
+            }
+            if (llmAnswers.isNotEmpty() && sanitizedLlmAnswers.isEmpty()) {
+                processDetails += "LLM-Nachfilter: verworfen (degenerierte/duplizierte Antworten)"
+            }
             val answers = mergeAnswersPerField(
                 llmAnswers = sanitizedLlmAnswers,
                 heuristicAnswers = heuristicAnswers,
                 fallbackAnswers = fallbackAnswers,
             )
+            processDetails += "Finale Feldzuordnung: ${answers.size} Feld(er)"
 
             println(
                 "DEBUG OnDeviceLlmFormMappingRepository: answers llm=${sanitizedLlmAnswers.keys} " +
@@ -192,6 +289,8 @@ class OnDeviceLlmFormMappingRepository(
             TranscriptMappingResult(
                 speakerBlocks = speakerBlocks,
                 fieldAnswers = answers,
+                processLog = processLog,
+                processDetails = processDetails,
             )
         }
 
@@ -219,6 +318,36 @@ class OnDeviceLlmFormMappingRepository(
             if (parsed.isNotEmpty()) return parsed
         }
         return emptyMap()
+    }
+
+    private suspend fun invokeLlmWithHardTimeout(
+        engine: OnDeviceLlmEngine,
+        systemPrompt: String,
+        userPrompt: String,
+        timeoutMs: Long,
+    ): String? = withContext(Dispatchers.IO) {
+        val executor = Executors.newSingleThreadExecutor { runnable ->
+            Thread(runnable, "on-device-llm-mapping-worker").apply {
+                isDaemon = true
+            }
+        }
+
+        try {
+            val future = executor.submit<String> {
+                runBlocking {
+                    engine.completeJson(systemPrompt = systemPrompt, userPrompt = userPrompt)
+                }
+            }
+
+            try {
+                future.get(timeoutMs, TimeUnit.MILLISECONDS)
+            } catch (_: TimeoutException) {
+                future.cancel(true)
+                null
+            }
+        } finally {
+            executor.shutdownNow()
+        }
     }
 
     private fun buildJsonCandidates(raw: String): List<String> {

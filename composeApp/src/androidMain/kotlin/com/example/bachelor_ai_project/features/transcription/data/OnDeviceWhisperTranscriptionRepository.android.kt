@@ -6,10 +6,15 @@ import android.media.MediaFormat
 import com.example.bachelor_ai_project.core.result.AppResult
 import com.example.bachelor_ai_project.core.result.runCatchingResult
 import com.example.bachelor_ai_project.features.transcription.domain.TranscriptSegment
+import com.example.bachelor_ai_project.features.transcription.domain.OnDeviceTranscriptionConfigurable
+import com.example.bachelor_ai_project.features.transcription.domain.OnDeviceWhisperModelState
 import com.example.bachelor_ai_project.features.transcription.domain.TranscriptionRepository
 import com.example.bachelor_ai_project.features.transcription.domain.TranscriptionResponse
+import com.example.bachelor_ai_project.features.transcription.domain.WhisperLocalModel
 import com.whispercpp.whisper.WhisperContext
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -23,16 +28,30 @@ import kotlin.math.min
  */
 class OnDeviceWhisperTranscriptionRepository(
     private val modelPath: String,
-) : TranscriptionRepository {
+    private val modelManager: AndroidWhisperModelManager? = null,
+) : TranscriptionRepository, OnDeviceTranscriptionConfigurable {
+
+    private val fallbackModelState = MutableStateFlow(OnDeviceWhisperModelState())
+    override val modelState: StateFlow<OnDeviceWhisperModelState>
+        get() = modelManager?.state ?: fallbackModelState
+
+    override suspend fun selectModel(model: WhisperLocalModel) {
+        modelManager?.selectModel(model)
+    }
+
+    override suspend fun prepareSmallModel() {
+        modelManager?.prepareSmallModel()
+    }
 
     override suspend fun transcribe(audioFilePath: String): AppResult<TranscriptionResponse> =
         withContext(Dispatchers.Default) {
             runCatchingResult {
                 val startedAt = System.currentTimeMillis()
                 println("DEBUG OnDeviceWhisperTranscriptionRepository: start thread=${Thread.currentThread().name}")
-                val modelFile = File(modelPath)
+                val activeModelPath = modelManager?.resolveActiveModelPath() ?: modelPath
+                val modelFile = File(activeModelPath)
                 require(modelFile.exists() && modelFile.isFile && modelFile.canRead()) {
-                    "Whisper model file nicht lesbar: $modelPath"
+                    "Whisper model file nicht lesbar: $activeModelPath"
                 }
 
                 val audioFile = File(audioFilePath)
@@ -43,7 +62,7 @@ class OnDeviceWhisperTranscriptionRepository(
                 val samples = decodeAudioToMono16kFloatArray(audioFile)
                 require(samples.isNotEmpty()) { "Audio-Datei enthaelt keine Samples" }
 
-                val context = WhisperContext.createContextFromFile(modelPath)
+                val context = WhisperContext.createContextFromFile(activeModelPath)
                 try {
                     val raw = context.transcribeData(samples, printTimestamp = true).trim()
                     val segments = parseWhisperSegments(raw)

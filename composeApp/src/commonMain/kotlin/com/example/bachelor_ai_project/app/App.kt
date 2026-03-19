@@ -15,6 +15,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.bachelor_ai_project.app.ui.AutomationSettingsCard
 import com.example.bachelor_ai_project.features.recording.ui.RecordingScreen
 import com.example.bachelor_ai_project.features.form.ui.FormScreen
 import com.example.bachelor_ai_project.features.transcription.ui.TranscriptionScreen
@@ -39,6 +40,14 @@ fun App() {
             Spacer(Modifier.height(16.dp))
 
             TranscriptionScreen(viewModel = appViewModel.transcriptionViewModel)
+
+            Spacer(Modifier.height(16.dp))
+
+            AutomationSettingsCard(
+                formViewModel = appViewModel.formViewModel,
+                transcriptionViewModel = appViewModel.transcriptionViewModel,
+                modifier = Modifier.padding(horizontal = 16.dp),
+            )
 
             Spacer(Modifier.height(16.dp))
 

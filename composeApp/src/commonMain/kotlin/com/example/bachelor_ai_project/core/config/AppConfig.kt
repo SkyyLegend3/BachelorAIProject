@@ -14,5 +14,6 @@ expect object AppConfig {
     val openAiApiKey: String
     val llamaModelPath: String
     val whisperModelPath: String
+    val whisperSmallModelDownloadUrl: String
 }
 

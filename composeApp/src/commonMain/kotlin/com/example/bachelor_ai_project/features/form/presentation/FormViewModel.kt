@@ -15,11 +15,16 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.supervisorScope
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.withContext
+import kotlin.time.TimeSource
 
 /**
  * ViewModel für den Formular-Screen.
@@ -39,9 +44,11 @@ class FormViewModel(
     companion object {
         private const val MAX_LOG_ENTRIES = 16
         private const val ON_DEVICE_MAPPING_TIMEOUT_MS = 90_000L
+        private const val MAPPING_HEARTBEAT_MS = 5_000L
     }
 
     private var lastTranscript: TranscriptionResponse? = null
+    private var mappingRunId: Long = 0L
     private val onDeviceConfigurableRepository = onDeviceMappingRepository as? OnDeviceFormMappingConfigurable
 
     var onAutomationModeChanged: ((FormAutomationMode) -> Unit)? = null
@@ -64,12 +71,13 @@ class FormViewModel(
      */
     fun applyTranscript(response: TranscriptionResponse) {
         if (_uiState.value.isMappingLoading) return
+        val runId = ++mappingRunId
         lastTranscript = response
 
         viewModelScope.launch {
             val mode = _uiState.value.automationMode
-            val startedAt = System.currentTimeMillis()
-            appendLog("Mapping-Start: mode=${mode.name}, thread=${Thread.currentThread().name}")
+            val startedAt = TimeSource.Monotonic.markNow()
+            appendLog("Mapping-Start: mode=${mode.name}")
 
             val nonBlankSegmentCount = response.segments.count { it.text.isNotBlank() }
             val nonBlankWordCount = response.words.count { it.word.isNotBlank() }
@@ -86,13 +94,63 @@ class FormViewModel(
             )
             _uiState.update { it.copy(isMappingLoading = true, mappingError = null) }
 
+            var heartbeatJob: Job? = null
+            var safetyBrakeJob: Job? = null
+            if (mode == FormAutomationMode.ON_DEVICE) {
+                heartbeatJob = viewModelScope.launch(Dispatchers.Default) {
+                    runCatching {
+                        var elapsedMs = MAPPING_HEARTBEAT_MS
+                        while (
+                            _uiState.value.isMappingLoading &&
+                            runId == mappingRunId
+                        ) {
+                            delay(MAPPING_HEARTBEAT_MS)
+                            if (_uiState.value.isMappingLoading && runId == mappingRunId) {
+                                appendLog("On-Device-Mapping laeuft... ${elapsedMs / 1000}s")
+                            }
+                            elapsedMs += MAPPING_HEARTBEAT_MS
+                        }
+                    }.onFailure { error ->
+                        appendLog("Heartbeat-Fehler: ${error.message ?: "Unbekannt"}")
+                    }
+                }
+
+                safetyBrakeJob = viewModelScope.launch(Dispatchers.Default) {
+                    delay(ON_DEVICE_MAPPING_TIMEOUT_MS + 2_000L)
+                    if (_uiState.value.isMappingLoading && runId == mappingRunId) {
+                        appendLog("On-Device-Mapping Notbremse: UI-Zustand wird zurueckgesetzt")
+                        mappingRunId++
+                        _uiState.update {
+                            it.copy(
+                                isMappingLoading = false,
+                                mappingError = "On-Device-Mapping haengt. Bitte erneut versuchen oder auf Cloud wechseln.",
+                            )
+                        }
+                    }
+                }
+            }
+
             val result = try {
-                withContext(Dispatchers.Default) {
-                    if (mode == FormAutomationMode.ON_DEVICE) {
-                        withTimeout(ON_DEVICE_MAPPING_TIMEOUT_MS) {
+                if (mode == FormAutomationMode.ON_DEVICE) {
+                    supervisorScope {
+                        val mappingJob = async(Dispatchers.Default) {
                             MapTranscriptToFormUseCase(activeRepository()).invoke(response)
                         }
-                    } else {
+                        val awaited = withTimeoutOrNull(ON_DEVICE_MAPPING_TIMEOUT_MS) {
+                            mappingJob.await()
+                        }
+                        if (awaited == null) {
+                            appendLog("On-Device-Mapping Watchdog: Job nach ${ON_DEVICE_MAPPING_TIMEOUT_MS / 1000}s abgebrochen")
+                            mappingJob.cancel()
+                            AppResult.Error(
+                                "On-Device-Mapping hat zu lange gedauert. Bitte erneut versuchen oder auf Cloud wechseln."
+                            )
+                        } else {
+                            awaited
+                        }
+                    }
+                } else {
+                    withContext(Dispatchers.Default) {
                         MapTranscriptToFormUseCase(activeRepository()).invoke(response)
                     }
                 }
@@ -101,14 +159,32 @@ class FormViewModel(
                 AppResult.Error(
                     "On-Device-Mapping hat zu lange gedauert. Bitte erneut versuchen oder auf Cloud wechseln."
                 )
+            } catch (t: Throwable) {
+                appendLog("On-Device-Mapping unerwarteter Fehler: ${t.message ?: "Unbekannt"}")
+                AppResult.Error(
+                    "On-Device-Mapping ist fehlgeschlagen. Bitte erneut versuchen oder auf Cloud wechseln.",
+                    t,
+                )
+            } finally {
+                heartbeatJob?.cancel()
+                safetyBrakeJob?.cancel()
             }
 
-            val durationMs = System.currentTimeMillis() - startedAt
+            if (runId != mappingRunId) {
+                appendLog("Mapping-Run verworfen (neuere Anfrage aktiv)")
+                return@launch
+            }
+
+            val durationMs = startedAt.elapsedNow().inWholeMilliseconds
 
             when (result) {
                 is AppResult.Success -> {
                     val mappingResult = result.data
                     println("DEBUG FormViewModel: Mapping erfolgreich, fieldAnswers=${mappingResult.fieldAnswers}")
+                    mappingResult.processLog?.let { appendLog("Mapping-Pfad: $it") }
+                    mappingResult.processDetails.takeLast(8).forEach { detail ->
+                        appendLog("Mapping-Detail: $detail")
+                    }
                     appendLog("Transkript-Debug: speakerBlocks=${mappingResult.speakerBlocks.size}")
                     if (mappingResult.fieldAnswers.isEmpty()) {
                         appendLog("Mapping abgeschlossen: keine automatische Feldzuordnung erkannt")
@@ -120,6 +196,7 @@ class FormViewModel(
                         current.copy(
                             isMappingLoading = false,
                             mappingError = null,
+                            lastMappingProcess = mappingResult.processLog ?: current.lastMappingProcess,
                             speakerBlocks = mappingResult.speakerBlocks,
                             entries = current.entries.map { entry ->
                                 val prefilled = mappingResult.fieldAnswers[entry.question.id]
@@ -228,6 +305,7 @@ class FormViewModel(
      * Setzt das gesamte Formular auf den Ausgangszustand zurück.
      */
     fun reset() {
+        mappingRunId++
         _uiState.update { current ->
             current.copy(
                 entries = current.entries.map { entry ->
@@ -236,6 +314,7 @@ class FormViewModel(
                 speakerBlocks = emptyList(),
                 isMappingLoading = false,
                 mappingError = null,
+                lastMappingProcess = null,
                 mappingLogs = emptyList(),
                 automationMode = FormAutomationMode.CLOUD,
                 onDeviceOrthographyCorrectionEnabled = true,

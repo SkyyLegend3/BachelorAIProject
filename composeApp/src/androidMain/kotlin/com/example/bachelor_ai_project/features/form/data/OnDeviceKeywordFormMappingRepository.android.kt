@@ -44,6 +44,7 @@ class OnDeviceKeywordFormMappingRepository(
             TranscriptMappingResult(
                 speakerBlocks = speakerBlocks,
                 fieldAnswers = answers,
+                processLog = "On-Device Heuristik",
             )
         }
 

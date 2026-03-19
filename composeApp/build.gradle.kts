@@ -10,6 +10,7 @@ val localProperties = Properties().apply {
 val openAiApiKey: String = localProperties.getProperty("openai.api.key", "")
 val llamaModelPath: String = localProperties.getProperty("llama.model.path", "")
 val whisperModelPath: String = localProperties.getProperty("whisper.model.path", "")
+val whisperSmallModelDownloadUrl: String = localProperties.getProperty("whisper.small.model.download.url", "")
 
 plugins {
     alias(libs.plugins.kotlinMultiplatform)
@@ -89,6 +90,7 @@ android {
         buildConfigField("String", "OPENAI_API_KEY", "\"$openAiApiKey\"")
         buildConfigField("String", "LLAMA_MODEL_PATH", "\"$llamaModelPath\"")
         buildConfigField("String", "WHISPER_MODEL_PATH", "\"$whisperModelPath\"")
+        buildConfigField("String", "WHISPER_SMALL_MODEL_DOWNLOAD_URL", "\"$whisperSmallModelDownloadUrl\"")
     }
     packaging {
         jniLibs {
