@@ -33,6 +33,11 @@ constexpr int   OVERFLOW_HEADROOM       = 4;
 constexpr int   BATCH_SIZE              = 512;
 constexpr float DEFAULT_SAMPLER_TEMP    = 0.3f;
 
+static int   g_runtime_n_ctx        = DEFAULT_CONTEXT_SIZE;
+static float g_runtime_sampler_temp = DEFAULT_SAMPLER_TEMP;
+static int   g_runtime_threads_min  = N_THREADS_MIN;
+static int   g_runtime_threads_max  = N_THREADS_MAX;
+
 static llama_model                      * g_model;
 static llama_context                    * g_context;
 static llama_batch                        g_batch;
@@ -80,7 +85,9 @@ static llama_context *init_context(llama_model *model, const int n_ctx = DEFAULT
     }
 
     // Multi-threading setup
-    const int n_threads = std::max(N_THREADS_MIN, std::min(N_THREADS_MAX,
+    const int n_threads_min = std::max(1, g_runtime_threads_min);
+    const int n_threads_max = std::max(n_threads_min, g_runtime_threads_max);
+    const int n_threads = std::max(n_threads_min, std::min(n_threads_max,
                                                      (int) sysconf(_SC_NPROCESSORS_ONLN) -
                                                      N_THREADS_HEADROOM));
     LOGi("%s: Using %d threads", __func__, n_threads);
@@ -112,13 +119,35 @@ static common_sampler *new_sampler(float temp) {
 
 extern "C"
 JNIEXPORT jint JNICALL
+Java_com_arm_aichat_internal_InferenceEngineImpl_configureGeneration(
+        JNIEnv * /*env*/,
+        jobject /*unused*/,
+        jint n_ctx,
+        jfloat temperature,
+        jint threads_min,
+        jint threads_max
+) {
+    g_runtime_n_ctx = std::max(128, (int) n_ctx);
+    g_runtime_sampler_temp = std::max(0.0f, (float) temperature);
+    g_runtime_threads_min = std::max(1, (int) threads_min);
+    g_runtime_threads_max = std::max(g_runtime_threads_min, (int) threads_max);
+
+    LOGi(
+        "%s: n_ctx=%d, temperature=%.3f, threads=%d-%d",
+        __func__, g_runtime_n_ctx, g_runtime_sampler_temp, g_runtime_threads_min, g_runtime_threads_max
+    );
+    return 0;
+}
+
+extern "C"
+JNIEXPORT jint JNICALL
 Java_com_arm_aichat_internal_InferenceEngineImpl_prepare(JNIEnv * /*env*/, jobject /*unused*/) {
-    auto *context = init_context(g_model);
+    auto *context = init_context(g_model, g_runtime_n_ctx);
     if (!context) { return 1; }
     g_context = context;
     g_batch = llama_batch_init(BATCH_SIZE, 0, 1);
     g_chat_templates = common_chat_templates_init(g_model, "");
-    g_sampler = new_sampler(DEFAULT_SAMPLER_TEMP);
+    g_sampler = new_sampler(g_runtime_sampler_temp);
     return 0;
 }
 

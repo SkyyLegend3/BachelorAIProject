@@ -1,6 +1,8 @@
 package com.example.bachelor_ai_project.features.form.ui
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -8,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
@@ -21,6 +24,8 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.example.bachelor_ai_project.features.form.domain.FormAutomationMode
 import com.example.bachelor_ai_project.features.form.presentation.FormViewModel
@@ -79,6 +84,37 @@ fun FormScreen(
                     modifier = Modifier.weight(1f),
                     onClick = { viewModel.setAutomationMode(FormAutomationMode.ON_DEVICE) },
                 )
+            }
+
+            if (state.automationMode == FormAutomationMode.ON_DEVICE && state.supportsOnDeviceMapping) {
+                val indicatorColor = when {
+                    state.isOnDeviceLlmModelLoading -> Color(0xFFF9A825)
+                    state.isOnDeviceLlmModelReady -> Color(0xFF2E7D32)
+                    else -> Color(0xFFC62828)
+                }
+                val indicatorText = when {
+                    state.isOnDeviceLlmModelLoading -> "Model wird geladen"
+                    state.isOnDeviceLlmModelReady -> "LLM-Model bereit"
+                    else -> "LLM-Model nicht gefunden"
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(10.dp)
+                            .clip(CircleShape)
+                            .background(indicatorColor)
+                    )
+                    Text(
+                        text = indicatorText,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color.Black,
+                    )
+                }
             }
 
             if (!state.supportsOnDeviceMapping) {
@@ -149,6 +185,14 @@ fun FormScreen(
                 }
             }
 
+            state.mappingSourceError?.let { sourceError ->
+                Text(
+                    text = sourceError,
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+
             state.mappingError?.let { error ->
                 Text(
                     text = error,
@@ -170,6 +214,24 @@ fun FormScreen(
                         viewModel.updateAnswer(entry.question.id, newValue)
                     },
                 )
+            }
+
+            if (state.supportsOnDeviceMapping && state.automationMode == FormAutomationMode.ON_DEVICE) {
+                Button(
+                    onClick = viewModel::runOnDeviceLlmTest,
+                    enabled = !state.isLlmTestRunning,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(if (state.isLlmTestRunning) "LLM Test laeuft..." else "LLM Test")
+                }
+
+                state.llmTestSuccess?.let { success ->
+                    Text(
+                        text = if (success) "LLM funktioniert" else "LLM fail",
+                        color = if (success) Color(0xFF2E7D32) else MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
             }
 
             state.submitError?.let { error ->

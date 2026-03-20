@@ -10,6 +10,46 @@ val localProperties = Properties().apply {
 val openAiApiKey: String = localProperties.getProperty("openai.api.key", "")
 val llamaModelPath: String = localProperties.getProperty("llama.model.path", "")
 val whisperModelPath: String = localProperties.getProperty("whisper.model.path", "")
+val llamaPerformanceMode: Boolean = localProperties
+    .getProperty("llama.performance.mode", "true")
+    .toBooleanStrictOrNull()
+    ?: true
+val llamaPredictLength: Int = localProperties
+    .getProperty(
+        "llama.predict.length",
+        if (llamaPerformanceMode) "64" else "256",
+    )
+    .toIntOrNull()
+    ?.coerceAtLeast(1)
+    ?: if (llamaPerformanceMode) 64 else 256
+val llamaInferenceTimeoutMs: Long = localProperties
+    .getProperty(
+        "llama.inference.timeout.ms",
+        if (llamaPerformanceMode) "45000" else "60000",
+    )
+    .toLongOrNull()
+    ?.coerceAtLeast(5_000L)
+    ?: if (llamaPerformanceMode) 45_000L else 60_000L
+val llamaContextSize: Int = localProperties
+    .getProperty("llama.n.ctx", "512")
+    .toIntOrNull()
+    ?.coerceAtLeast(128)
+    ?: 512
+val llamaTemperature: Double = localProperties
+    .getProperty("llama.temperature", "0.0")
+    .toDoubleOrNull()
+    ?.coerceAtLeast(0.0)
+    ?: 0.0
+val llamaThreadsMin: Int = localProperties
+    .getProperty("llama.threads.min", "2")
+    .toIntOrNull()
+    ?.coerceAtLeast(1)
+    ?: 2
+val llamaThreadsMax: Int = localProperties
+    .getProperty("llama.threads.max", "4")
+    .toIntOrNull()
+    ?.coerceAtLeast(llamaThreadsMin)
+    ?: 4
 
 plugins {
     alias(libs.plugins.kotlinMultiplatform)
@@ -89,6 +129,13 @@ android {
         buildConfigField("String", "OPENAI_API_KEY", "\"$openAiApiKey\"")
         buildConfigField("String", "LLAMA_MODEL_PATH", "\"$llamaModelPath\"")
         buildConfigField("String", "WHISPER_MODEL_PATH", "\"$whisperModelPath\"")
+        buildConfigField("boolean", "LLAMA_PERFORMANCE_MODE", "$llamaPerformanceMode")
+        buildConfigField("int", "LLAMA_PREDICT_LENGTH", "$llamaPredictLength")
+        buildConfigField("long", "LLAMA_INFERENCE_TIMEOUT_MS", "${llamaInferenceTimeoutMs}L")
+        buildConfigField("int", "LLAMA_N_CTX", "$llamaContextSize")
+        buildConfigField("float", "LLAMA_TEMPERATURE", "${llamaTemperature}f")
+        buildConfigField("int", "LLAMA_THREADS_MIN", "$llamaThreadsMin")
+        buildConfigField("int", "LLAMA_THREADS_MAX", "$llamaThreadsMax")
     }
     packaging {
         jniLibs {

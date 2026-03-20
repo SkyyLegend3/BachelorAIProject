@@ -8,8 +8,10 @@ import com.example.bachelor_ai_project.features.form.domain.FormAutomationMode
 import com.example.bachelor_ai_project.features.form.domain.FormDefinitionProvider
 import com.example.bachelor_ai_project.features.form.domain.FormEntry
 import com.example.bachelor_ai_project.features.form.domain.FormMappingRepository
+import com.example.bachelor_ai_project.features.form.domain.MappingStrategy
 import com.example.bachelor_ai_project.features.form.domain.MapTranscriptToFormUseCase
 import com.example.bachelor_ai_project.features.form.domain.OnDeviceFormMappingConfigurable
+import com.example.bachelor_ai_project.features.form.domain.OnDeviceLlmModelStatusProvider
 import com.example.bachelor_ai_project.features.transcription.domain.TranscriptionResponse
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -20,6 +22,7 @@ import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withContext
+import kotlin.time.TimeSource
 
 /**
  * ViewModel für den Formular-Screen.
@@ -43,6 +46,7 @@ class FormViewModel(
 
     private var lastTranscript: TranscriptionResponse? = null
     private val onDeviceConfigurableRepository = onDeviceMappingRepository as? OnDeviceFormMappingConfigurable
+    private val onDeviceModelStatusProvider = onDeviceMappingRepository as? OnDeviceLlmModelStatusProvider
 
     var onAutomationModeChanged: ((FormAutomationMode) -> Unit)? = null
 
@@ -55,6 +59,8 @@ class FormViewModel(
                 )
             },
             supportsOnDeviceMapping = onDeviceMappingRepository != null,
+            isOnDeviceLlmModelReady = isOnDeviceLlmModelReady(),
+            isOnDeviceLlmModelLoading = isOnDeviceLlmModelLoading(),
         ),
     )
     val uiState: StateFlow<FormUiState> = _uiState.asStateFlow()
@@ -68,8 +74,12 @@ class FormViewModel(
 
         viewModelScope.launch {
             val mode = _uiState.value.automationMode
-            val startedAt = System.currentTimeMillis()
-            appendLog("Mapping-Start: mode=${mode.name}, thread=${Thread.currentThread().name}")
+            val startedAt = TimeSource.Monotonic.markNow()
+            appendLog("Mapping-Start: mode=${mode.name}")
+
+            if (mode == FormAutomationMode.ON_DEVICE) {
+                refreshOnDeviceLlmModelReady()
+            }
 
             val nonBlankSegmentCount = response.segments.count { it.text.isNotBlank() }
             val nonBlankWordCount = response.words.count { it.word.isNotBlank() }
@@ -84,7 +94,7 @@ class FormViewModel(
                 else
                     "Starte Cloud-Mapping..."
             )
-            _uiState.update { it.copy(isMappingLoading = true, mappingError = null) }
+            _uiState.update { it.copy(isMappingLoading = true, mappingError = null, mappingSourceError = null) }
 
             val result = try {
                 withContext(Dispatchers.Default) {
@@ -103,13 +113,34 @@ class FormViewModel(
                 )
             }
 
-            val durationMs = System.currentTimeMillis() - startedAt
+            val durationMs = startedAt.elapsedNow().inWholeMilliseconds
 
             when (result) {
                 is AppResult.Success -> {
                     val mappingResult = result.data
                     println("DEBUG FormViewModel: Mapping erfolgreich, fieldAnswers=${mappingResult.fieldAnswers}")
                     appendLog("Transkript-Debug: speakerBlocks=${mappingResult.speakerBlocks.size}")
+                    appendLog(
+                        when (mappingResult.mappingStrategy) {
+                            MappingStrategy.CLOUD_LLM -> "Mapping-Quelle: LLM-Mapping (Cloud)"
+                            MappingStrategy.ON_DEVICE_LLM -> "Mapping-Quelle: LLM-Mapping (On Device)"
+                            MappingStrategy.MIXED -> "Mapping-Quelle: LLM + Heuristik/Fallback"
+                            MappingStrategy.HEURISTIC_FALLBACK -> "Mapping-Quelle: Heuristik/Fallback"
+                            MappingStrategy.UNKNOWN -> "Mapping-Quelle: Unbekannt"
+                        }
+                    )
+                    val sourceErrorMessage = if (
+                        mode == FormAutomationMode.ON_DEVICE &&
+                        (mappingResult.mappingStrategy == MappingStrategy.HEURISTIC_FALLBACK || mappingResult.mappingStrategy == MappingStrategy.UNKNOWN) &&
+                        !mappingResult.llmFailureReason.isNullOrBlank()
+                    ) {
+                        "LLM-Mapping nicht moeglich: ${mappingResult.llmFailureReason}"
+                    } else {
+                        null
+                    }
+                    if (!sourceErrorMessage.isNullOrBlank()) {
+                        appendLog(sourceErrorMessage)
+                    }
                     if (mappingResult.fieldAnswers.isEmpty()) {
                         appendLog("Mapping abgeschlossen: keine automatische Feldzuordnung erkannt")
                     } else {
@@ -120,6 +151,7 @@ class FormViewModel(
                         current.copy(
                             isMappingLoading = false,
                             mappingError = null,
+                            mappingSourceError = sourceErrorMessage,
                             speakerBlocks = mappingResult.speakerBlocks,
                             entries = current.entries.map { entry ->
                                 val prefilled = mappingResult.fieldAnswers[entry.question.id]
@@ -145,6 +177,7 @@ class FormViewModel(
                         it.copy(
                             isMappingLoading = false,
                             mappingError = uiMessage,
+                            mappingSourceError = null,
                         )
                     }
                 }
@@ -165,12 +198,22 @@ class FormViewModel(
         )
 
         if (mode == FormAutomationMode.ON_DEVICE) {
+            refreshOnDeviceLlmModelReady()
+            warmupOnDeviceModelIfNeeded()
             onDeviceConfigurableRepository?.setOrthographyCorrectionEnabled(
                 _uiState.value.onDeviceOrthographyCorrectionEnabled
             )
         }
 
-        _uiState.update { it.copy(automationMode = mode, mappingError = null) }
+        _uiState.update {
+            it.copy(
+                automationMode = mode,
+                mappingError = null,
+                mappingSourceError = null,
+                isLlmTestRunning = false,
+                llmTestSuccess = null,
+            )
+        }
         onAutomationModeChanged?.invoke(mode)
 
         lastTranscript?.let { applyTranscript(it) }
@@ -194,11 +237,39 @@ class FormViewModel(
     }
 
     fun clearMappingError() {
-        _uiState.update { it.copy(mappingError = null) }
+        _uiState.update { it.copy(mappingError = null, mappingSourceError = null) }
     }
 
     fun clearError() {
         _uiState.update { it.copy(submitError = null) }
+    }
+
+    fun runOnDeviceLlmTest() {
+        val provider = onDeviceModelStatusProvider ?: return
+        val current = _uiState.value
+        if (current.automationMode != FormAutomationMode.ON_DEVICE) return
+        if (!current.supportsOnDeviceMapping) return
+        if (current.isLlmTestRunning) return
+
+        viewModelScope.launch {
+            appendLog("LLM-Test gestartet")
+            _uiState.update { it.copy(isLlmTestRunning = true, llmTestSuccess = null) }
+
+            val testResult = withContext(Dispatchers.Default) {
+                provider.runOnDeviceLlmSelfTest()
+            }
+
+            when (testResult) {
+                is AppResult.Success -> {
+                    appendLog("LLM-Test erfolgreich")
+                    _uiState.update { it.copy(isLlmTestRunning = false, llmTestSuccess = true) }
+                }
+                is AppResult.Error -> {
+                    appendLog("LLM-Test fehlgeschlagen: ${testResult.message}")
+                    _uiState.update { it.copy(isLlmTestRunning = false, llmTestSuccess = false) }
+                }
+            }
+        }
     }
 
     fun setOnDeviceOrthographyCorrectionEnabled(enabled: Boolean) {
@@ -206,6 +277,7 @@ class FormViewModel(
             it.copy(
                 onDeviceOrthographyCorrectionEnabled = enabled,
                 mappingError = null,
+                mappingSourceError = null,
             )
         }
 
@@ -236,8 +308,13 @@ class FormViewModel(
                 speakerBlocks = emptyList(),
                 isMappingLoading = false,
                 mappingError = null,
+                mappingSourceError = null,
                 mappingLogs = emptyList(),
                 automationMode = FormAutomationMode.CLOUD,
+                isOnDeviceLlmModelReady = isOnDeviceLlmModelReady(),
+                isOnDeviceLlmModelLoading = false,
+                isLlmTestRunning = false,
+                llmTestSuccess = null,
                 onDeviceOrthographyCorrectionEnabled = true,
                 isSubmitting = false,
                 submitError = null,
@@ -257,6 +334,51 @@ class FormViewModel(
         _uiState.update { current ->
             val updated = (current.mappingLogs + message).takeLast(MAX_LOG_ENTRIES)
             current.copy(mappingLogs = updated)
+        }
+    }
+
+    private fun refreshOnDeviceLlmModelReady() {
+        _uiState.update { current ->
+            current.copy(
+                isOnDeviceLlmModelReady = isOnDeviceLlmModelReady(),
+                isOnDeviceLlmModelLoading = isOnDeviceLlmModelLoading(),
+            )
+        }
+    }
+
+    private fun isOnDeviceLlmModelReady(): Boolean {
+        return onDeviceModelStatusProvider?.isOnDeviceLlmModelReady() == true
+    }
+
+    private fun isOnDeviceLlmModelConfigured(): Boolean {
+        return onDeviceModelStatusProvider?.isOnDeviceLlmModelConfigured() == true
+    }
+
+    private fun isOnDeviceLlmModelLoading(): Boolean {
+        return onDeviceModelStatusProvider?.isOnDeviceLlmModelLoading() == true
+    }
+
+    private fun warmupOnDeviceModelIfNeeded() {
+        val provider = onDeviceModelStatusProvider ?: return
+        if (!isOnDeviceLlmModelConfigured()) return
+        if (provider.isOnDeviceLlmModelReady()) return
+
+        viewModelScope.launch {
+            _uiState.update { it.copy(isOnDeviceLlmModelLoading = true) }
+
+            val warmup = withContext(Dispatchers.Default) {
+                provider.warmupOnDeviceLlmModel()
+            }
+            when (warmup) {
+                is AppResult.Success -> {
+                    appendLog("LLM-Model geladen und bereit")
+                }
+                is AppResult.Error -> {
+                    appendLog("LLM-Model laden fehlgeschlagen: ${warmup.message}")
+                }
+            }
+
+            refreshOnDeviceLlmModelReady()
         }
     }
 }

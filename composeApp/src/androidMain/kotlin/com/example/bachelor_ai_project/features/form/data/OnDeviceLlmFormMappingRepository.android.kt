@@ -1,14 +1,18 @@
 package com.example.bachelor_ai_project.features.form.data
 
+import com.example.bachelor_ai_project.core.config.AppConfig
 import com.example.bachelor_ai_project.core.result.AppResult
 import com.example.bachelor_ai_project.core.result.runCatchingResult
 import com.example.bachelor_ai_project.features.form.domain.FormDefinitionProvider
 import com.example.bachelor_ai_project.features.form.domain.FormMappingRepository
 import com.example.bachelor_ai_project.features.form.domain.LlmFieldMappingResponse
+import com.example.bachelor_ai_project.features.form.domain.MappingStrategy
 import com.example.bachelor_ai_project.features.form.domain.OnDeviceFormMappingConfigurable
+import com.example.bachelor_ai_project.features.form.domain.OnDeviceLlmModelStatusProvider
 import com.example.bachelor_ai_project.features.form.domain.TranscriptMappingResult
 import com.example.bachelor_ai_project.features.form.domain.TranscriptToFormMapper
 import com.example.bachelor_ai_project.features.transcription.domain.TranscriptionResponse
+import java.io.File
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -25,13 +29,24 @@ class OnDeviceLlmFormMappingRepository(
     private val definitionProvider: FormDefinitionProvider,
     private val llmEngine: OnDeviceLlmEngine?,
     private val fallbackRepository: FormMappingRepository,
-) : FormMappingRepository, OnDeviceFormMappingConfigurable {
+) : FormMappingRepository, OnDeviceFormMappingConfigurable, OnDeviceLlmModelStatusProvider {
 
     private data class FieldSpec(
         val id: String,
         val label: String,
         val normalizedLabel: String,
         val keywords: Set<String>,
+    )
+
+    private enum class CandidateSource {
+        LLM,
+        HEURISTIC,
+        FALLBACK,
+    }
+
+    private data class MergeOutcome(
+        val answers: Map<String, String>,
+        val usedSources: Set<CandidateSource>,
     )
 
     private val mapper = TranscriptToFormMapper()
@@ -64,6 +79,49 @@ class OnDeviceLlmFormMappingRepository(
 
     override fun setOrthographyCorrectionEnabled(enabled: Boolean) {
         orthographyCorrectionEnabled = enabled
+    }
+
+    override fun isOnDeviceLlmModelConfigured(): Boolean {
+        val modelPath = AppConfig.llamaModelPath.trim()
+        if (modelPath.isBlank()) return false
+        val file = File(modelPath)
+        return file.exists() && file.isFile
+    }
+
+    override fun isOnDeviceLlmModelReady(): Boolean {
+        if (!isOnDeviceLlmModelConfigured()) return false
+        val statusEngine = llmEngine as? WarmupCapableOnDeviceLlmEngine ?: return llmEngine != null
+        return statusEngine.isModelLoaded()
+    }
+
+    override fun isOnDeviceLlmModelLoading(): Boolean {
+        val statusEngine = llmEngine as? WarmupCapableOnDeviceLlmEngine ?: return false
+        return statusEngine.isModelLoading()
+    }
+
+    override suspend fun warmupOnDeviceLlmModel(): AppResult<Unit> {
+        if (!isOnDeviceLlmModelConfigured()) {
+            return AppResult.Error("LLM-Model nicht gefunden oder Pfad ungueltig.")
+        }
+        val statusEngine = llmEngine as? WarmupCapableOnDeviceLlmEngine
+            ?: return AppResult.Error("On-Device-LLM-Engine nicht verfuegbar.")
+        return statusEngine.warmupModel()
+    }
+
+    override suspend fun runOnDeviceLlmSelfTest(): AppResult<Unit> {
+        if (!isOnDeviceLlmModelConfigured()) {
+            return AppResult.Error("LLM-Model nicht gefunden oder Pfad ungueltig.")
+        }
+        val engine = llmEngine ?: return AppResult.Error("On-Device-LLM-Engine nicht verfuegbar.")
+
+        return runCatchingResult {
+            val systemPrompt = "Du antwortest exakt mit JSON."
+            val userPrompt = "Gib exakt dieses JSON zurueck: {\"ok\":\"ja\"}"
+            val raw = engine.completeJson(systemPrompt = systemPrompt, userPrompt = userPrompt)
+            val normalized = raw.replace("\n", " ")
+            val isOk = Regex("\"ok\"\\s*:\\s*\"ja\"", RegexOption.IGNORE_CASE).containsMatchIn(normalized)
+            require(isOk) { "Ungueltige Testantwort vom LLM." }
+        }
     }
 
     override suspend fun mapTranscript(response: TranscriptionResponse): AppResult<TranscriptMappingResult> {
@@ -161,15 +219,30 @@ class OnDeviceLlmFormMappingRepository(
                 Antworte jetzt strikt im JSON-Schema.
             """.trimIndent()
 
-            val llmAnswers = llmEngine?.let { engine ->
-                runCatching {
-                    val raw = engine.completeJson(systemPrompt = systemPrompt, userPrompt = userPrompt)
-                    extractAnswers(raw)
-                }.getOrElse { error ->
-                    println("DEBUG OnDeviceLlmFormMappingRepository: LLM-Fehler, nutze Heuristik/Fallback: ${error.message}")
+            var llmFailureReason: String? = null
+            val llmAnswers = when (val engine = llmEngine) {
+                null -> {
+                    llmFailureReason = "Keine On-Device-LLM-Engine verfuegbar (Bridge/Modell nicht initialisiert)."
                     emptyMap()
                 }
-            } ?: emptyMap()
+                else -> {
+                    val rawResult = runCatching {
+                        engine.completeJson(systemPrompt = systemPrompt, userPrompt = userPrompt)
+                    }
+                    if (rawResult.isFailure) {
+                        val error = rawResult.exceptionOrNull()
+                        llmFailureReason = "LLM-Aufruf fehlgeschlagen: ${error?.message ?: "unbekannter Fehler"}"
+                        println("DEBUG OnDeviceLlmFormMappingRepository: LLM-Fehler, nutze Heuristik/Fallback: ${error?.message}")
+                        emptyMap()
+                    } else {
+                        val extracted = extractAnswers(rawResult.getOrNull().orEmpty())
+                        if (extracted.isEmpty()) {
+                            llmFailureReason = "LLM-Antwort war leer oder nicht im erwarteten JSON-Schema."
+                        }
+                        extracted
+                    }
+                }
+            }
 
             val fallbackAnswers = when (val fallback = fallbackRepository.mapTranscript(response)) {
                 is AppResult.Success -> fallback.data.fieldAnswers
@@ -177,11 +250,32 @@ class OnDeviceLlmFormMappingRepository(
             }
 
             val sanitizedLlmAnswers = sanitizeLlmAnswers(llmAnswers)
-            val answers = mergeAnswersPerField(
+            if (llmAnswers.isNotEmpty() && sanitizedLlmAnswers.isEmpty() && llmFailureReason.isNullOrBlank()) {
+                llmFailureReason = "LLM-Antwort wurde als unbrauchbar verworfen."
+            }
+
+            val mergeOutcome = mergeAnswersPerField(
                 llmAnswers = sanitizedLlmAnswers,
                 heuristicAnswers = heuristicAnswers,
                 fallbackAnswers = fallbackAnswers,
             )
+            val answers = mergeOutcome.answers
+            val mappingStrategy = when {
+                CandidateSource.LLM in mergeOutcome.usedSources && mergeOutcome.usedSources.size == 1 -> MappingStrategy.ON_DEVICE_LLM
+                CandidateSource.LLM in mergeOutcome.usedSources -> MappingStrategy.MIXED
+                mergeOutcome.usedSources.isNotEmpty() -> MappingStrategy.HEURISTIC_FALLBACK
+                else -> MappingStrategy.UNKNOWN
+            }
+
+            val effectiveLlmFailureReason = when (mappingStrategy) {
+                MappingStrategy.ON_DEVICE_LLM,
+                MappingStrategy.MIXED,
+                MappingStrategy.CLOUD_LLM,
+                -> null
+                MappingStrategy.HEURISTIC_FALLBACK,
+                MappingStrategy.UNKNOWN,
+                -> llmFailureReason
+            }
 
             println(
                 "DEBUG OnDeviceLlmFormMappingRepository: answers llm=${sanitizedLlmAnswers.keys} " +
@@ -192,6 +286,8 @@ class OnDeviceLlmFormMappingRepository(
             TranscriptMappingResult(
                 speakerBlocks = speakerBlocks,
                 fieldAnswers = answers,
+                mappingStrategy = mappingStrategy,
+                llmFailureReason = effectiveLlmFailureReason,
             )
         }
 
@@ -328,20 +424,21 @@ class OnDeviceLlmFormMappingRepository(
         llmAnswers: Map<String, String>,
         heuristicAnswers: Map<String, String>,
         fallbackAnswers: Map<String, String>,
-    ): Map<String, String> {
+    ): MergeOutcome {
         val result = mutableMapOf<String, String>()
         val usedNormalizedAnswers = mutableSetOf<String>()
+        val usedSources = mutableSetOf<CandidateSource>()
 
         fieldSpecs.forEach { field ->
             val candidates = listOfNotNull(
-                llmAnswers[field.id]?.trim(),
-                heuristicAnswers[field.id]?.trim(),
-                fallbackAnswers[field.id]?.trim(),
-            ).map { candidate ->
-                normalizeCandidateForField(field = field, candidate = candidate)
+                llmAnswers[field.id]?.trim()?.let { CandidateSource.LLM to it },
+                heuristicAnswers[field.id]?.trim()?.let { CandidateSource.HEURISTIC to it },
+                fallbackAnswers[field.id]?.trim()?.let { CandidateSource.FALLBACK to it },
+            ).map { (source, candidate) ->
+                source to normalizeCandidateForField(field = field, candidate = candidate)
             }
 
-            val picked = candidates.firstOrNull { candidate ->
+            val picked = candidates.firstOrNull { (_, candidate) ->
                 isUsableFieldAnswer(
                     field = field,
                     answer = candidate,
@@ -349,13 +446,20 @@ class OnDeviceLlmFormMappingRepository(
                 )
             }
 
-            if (!picked.isNullOrBlank()) {
-                result[field.id] = picked
-                usedNormalizedAnswers += normalizeAnswerValue(picked)
+            if (picked != null) {
+                val (source, answer) = picked
+                if (answer.isNotBlank()) {
+                    result[field.id] = answer
+                    usedSources += source
+                    usedNormalizedAnswers += normalizeAnswerValue(answer)
+                }
             }
         }
 
-        return result
+        return MergeOutcome(
+            answers = result,
+            usedSources = usedSources,
+        )
     }
 
     private fun isUsableFieldAnswer(

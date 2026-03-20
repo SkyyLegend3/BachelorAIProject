@@ -98,6 +98,9 @@ internal class InferenceEngineImpl private constructor(
     private external fun processSystemPrompt(systemPrompt: String): Int
 
     @FastNative
+    private external fun configureGeneration(nCtx: Int, temperature: Float, threadsMin: Int, threadsMax: Int): Int
+
+    @FastNative
     private external fun processUserPrompt(userPrompt: String, predictLength: Int): Int
 
     @FastNative
@@ -210,6 +213,21 @@ internal class InferenceEngineImpl private constructor(
             Log.i(TAG, "System prompt processed! Awaiting user prompt...")
             _state.value = InferenceEngine.State.ModelReady
         }
+
+    override suspend fun configureRuntime(
+        nCtx: Int,
+        temperature: Float,
+        threadsMin: Int,
+        threadsMax: Int,
+    ) = withContext(llamaDispatcher) {
+        check(_state.value is InferenceEngine.State.Initialized) {
+            "Cannot configure runtime in ${_state.value.javaClass.simpleName}!"
+        }
+        val result = configureGeneration(nCtx, temperature, threadsMin, threadsMax)
+        if (result != 0) {
+            throw IllegalStateException("Failed to configure generation runtime: $result")
+        }
+    }
 
     /**
      * Send plain text user prompt to LLM, which starts generating tokens in a [Flow]

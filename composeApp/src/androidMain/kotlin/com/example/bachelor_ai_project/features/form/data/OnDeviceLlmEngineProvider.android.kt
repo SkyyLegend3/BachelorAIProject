@@ -1,5 +1,6 @@
 package com.example.bachelor_ai_project.features.form.data
 
+import com.example.bachelor_ai_project.BuildConfig
 import com.example.bachelor_ai_project.core.config.AppConfig
 
 /**
@@ -12,7 +13,27 @@ fun createDefaultOnDeviceLlmEngine(): OnDeviceLlmEngine? {
 	if (modelPath.isBlank()) return null
 	if (isAiChatStubActive()) return null
 
-	return LlamaCppOnDeviceLlmEngine(modelPath = modelPath)
+	val predictLength = BuildConfig.LLAMA_PREDICT_LENGTH.coerceAtLeast(1)
+	val inferenceTimeoutMs = BuildConfig.LLAMA_INFERENCE_TIMEOUT_MS.coerceAtLeast(5_000L)
+	val nCtx = BuildConfig.LLAMA_N_CTX.coerceAtLeast(128)
+	val temperature = BuildConfig.LLAMA_TEMPERATURE.coerceAtLeast(0f)
+	val threadsMin = BuildConfig.LLAMA_THREADS_MIN.coerceAtLeast(1)
+	val threadsMax = BuildConfig.LLAMA_THREADS_MAX.coerceAtLeast(threadsMin)
+	println(
+		"DEBUG OnDeviceLlmEngineProvider: performanceMode=${BuildConfig.LLAMA_PERFORMANCE_MODE}, " +
+			"predictLength=$predictLength, timeoutMs=$inferenceTimeoutMs, " +
+			"nCtx=$nCtx, temperature=$temperature, threads=$threadsMin-$threadsMax"
+	)
+
+	return LlamaCppOnDeviceLlmEngine(
+		modelPath = modelPath,
+		predictLength = predictLength,
+		inferenceTimeoutMs = inferenceTimeoutMs,
+		nCtx = nCtx,
+		temperature = temperature,
+		threadsMin = threadsMin,
+		threadsMax = threadsMax,
+	)
 }
 
 private fun isAiChatStubActive(): Boolean = runCatching {

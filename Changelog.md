@@ -1,6 +1,63 @@
 # Changelog
 
+## Stand: 2026-03-20
+
+## Android: On-Device LLM-Testbutton im Formular
+- Unter den Formularfeldern wird im Modus `On Device` (nur wenn On-Device-Mapping verfuegbar ist) jetzt ein Button `LLM Test` angezeigt.
+- Der Test fuehrt eine lokale LLM-Testanfrage aus und zeigt danach direkt unter dem Button das Ergebnis `LLM funktioniert` oder `LLM fail` an.
+- Der Ablauf ist an das On-Device-Status-Interface angebunden (`runOnDeviceLlmSelfTest`) und wird im Prozess-Log dokumentiert (`LLM-Test gestartet/erfolgreich/fehlgeschlagen`).
+
 ## Stand: 2026-03-19
+
+## Android: Fix fuer `UnsatisfiedLinkError` bei On-Device-LLM
+- `llamaAndroidLib` nutzt nicht mehr die alten Backup-Artefakte (`classes.jar` + `jniLibs`) aus `_restore_backup/...`, sondern wieder konsistent die aktuellen Quellen aus dem Modul selbst.
+- Dadurch kommen Java-Methoden und JNI-Symbole aus demselben Buildstand; der Fehler `No implementation found ... configureGeneration(int,float,int,int)` wird damit behoben.
+- Packaging-Bereinigung: `libai-chat.so`-`pickFirst` entfernt, damit keine veraltete Native-Binary die aktuelle Implementierung ueberschreibt.
+
+## Android + iOS: Prozess-Log zeigt Mapping-Quelle
+- `TranscriptMappingResult` um `mappingStrategy` erweitert, damit die Pipeline die tatsaechlich genutzte Quelle transportiert (`Cloud LLM`, `On-Device LLM`, `Mixed`, `Heuristik/Fallback`).
+- Repositories markieren ihre Ergebnisse nun explizit mit der jeweiligen Strategie (Cloud-LLM, On-Device-LLM, Keyword/Heuristik-Fallback).
+- `FormViewModel` schreibt die Mapping-Quelle in den vorhandenen UI-Prozess-Log, sodass direkt sichtbar ist, ob LLM-Mapping oder Heuristik/Fallback verwendet wurde.
+
+## Android + iOS: LLM-Prioritaet und roter Fallback-Hinweis
+- On-Device-Merge leitet die Mapping-Quelle jetzt aus den tatsaechlich verwendeten Feldkandidaten ab (LLM bleibt erste Prioritaet pro Feld).
+- Wenn On-Device nicht mit LLM mappen kann, wird der konkrete Grund (`Engine fehlt`, `LLM-Aufruf fehlgeschlagen`, `ungueltige Antwort`) als Diagnose mitgegeben.
+- Die Formular-UI zeigt diesen Grund im Prozessbereich als rote Meldung an, auch wenn Heuristik/Fallback erfolgreich Felder befuellt.
+
+## Android + iOS: Sichtbarer LLM-Modellstatus im Formular
+- Unter der Modusauswahl wird bei aktivem `On Device` ein sauberer Status-Indikator angezeigt: gruener Kreis mit `LLM-Model bereit` oder roter Kreis mit `LLM-Model nicht gefunden`.
+- Der Status basiert auf dem konfigurierten `LLAMA_MODEL_PATH` und einer plattformspezifischen Dateiexistenzpruefung (Android + iOS), der Text wird wie gewuenscht schwarz dargestellt.
+
+## Android + iOS: KMP-Fix fuer FormViewModel-Zeitmessung
+- `FormViewModel` nutzt fuer Mapping-Timing jetzt `TimeSource.Monotonic` statt JVM-spezifischer Aufrufe (`System.currentTimeMillis`, `Thread.currentThread`).
+- Prozess-Log `Mapping-Start` ist dadurch plattformneutral und kompiliert wieder auf iOS im `commonMain`-Pfad.
+- Verifiziert mit `:composeApp:compileKotlinIosSimulatorArm64` und `:composeApp:compileDebugKotlinAndroid` (beide erfolgreich).
+
+## Android + iOS: Einmaliges LLM-Modellladen + Ladezustand in UI
+- Android-LLM-Engine laedt das GGUF-Modell jetzt einmalig und nutzt es danach wieder, statt bei jedem Mappinglauf neu zu laden.
+- On-Device-Status erweitert: konfiguriert/ready/loading inkl. Warmup-Call beim Umschalten auf On-Device.
+- UI unter der On-Device-Auswahl zeigt jetzt zusaetzlich den Zustand `Model wird geladen` waehrend des initialen Ladens.
+
+## Android: UI-Freeze beim LLM-Warmup behoben
+- Schweres On-Device-Warmup (Modell laden) laeuft jetzt explizit auf `Dispatchers.Default` statt im Main-Thread-Kontext des `viewModelScope`.
+- `LlamaCppOnDeviceLlmEngine.warmupModel()` sichert den Dispatcher-Wechsel zusaetzlich direkt in der Engine ab.
+- Ziel: kein Einfrieren der UI waehrend `Model wird geladen` bzw. `Transkript wird verarbeitet...`.
+
+## Android: On-Device-Inferenz gegen Hänger gehaertet
+- `LlamaCppOnDeviceLlmEngine` nutzt jetzt ein explizites Inferenz-Timeout (`60s`), damit ein blockierender Token-Stream nicht endlos laeuft.
+- Token-Limit fuer Formular-Mapping auf `256` reduziert, um Laufzeit und Last auf mobilen Geraeten zu senken.
+- Zusaetzliches Diagnose-Logging fuer `first token`, `tokenCount` und Fehlzeitpunkt eingebaut, damit Freeze/Ursachen in Logcat klarer sichtbar sind.
+- Warmup und Inferenz werden zusaetzlich in einem dedizierten Worker-Thread mit `Future.get(timeout)` ausgefuehrt, damit auch nicht-kooperativ blockierende Native-Calls die Mapping-Pipeline nicht unbegrenzt festhalten.
+
+## Android: Konfigurierbarer LLM-Performance-Mode
+- `composeApp/build.gradle.kts` liest jetzt zusaetzliche lokale LLM-Performance-Parameter aus `local.properties`: `llama.performance.mode`, `llama.predict.length`, `llama.inference.timeout.ms`.
+- Die Werte werden als `BuildConfig`-Felder in Android bereitgestellt und beim Erzeugen der On-Device-LLM-Engine angewendet.
+- Ziel: schnellere/stabilere Formular-Mappings auf mobilen Geraeten durch kleineres Token-Budget und anpassbares Timeout, ohne Codeaenderung pro Testlauf.
+
+## Android: Runtime-Tuning fuer n_ctx, temperature und Threads
+- On-Device-Llama uebergibt jetzt zusaetzlich `n_ctx`, `temperature` und Thread-Range aus `BuildConfig` an die JNI-Schicht vor dem Modellladen.
+- Native `ai_chat.cpp` nutzt diese Laufzeitwerte fuer Context-Initialisierung (`ctx_params.n_ctx`), Sampler-Temperatur und die Thread-Berechnung (konfigurierter Min/Max-Bereich).
+- Neue lokale Parameter in `local.properties`: `llama.n.ctx`, `llama.temperature`, `llama.threads.min`, `llama.threads.max`.
 
 ## Android: Buildfix nach korrupten Kotlin-Datei-Headern
 - `FormViewModel.kt` bereinigt: versehentlich vorangestellter Codeblock vor der `package`-Deklaration entfernt, sodass Imports/Klasse wieder korrekt geparst werden.
