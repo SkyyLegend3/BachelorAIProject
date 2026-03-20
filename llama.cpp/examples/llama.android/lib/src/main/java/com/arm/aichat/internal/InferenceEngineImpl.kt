@@ -338,5 +338,10 @@ internal class InferenceEngineImpl private constructor(
             }
         }
         llamaScope.cancel()
+        synchronized(Companion) {
+            if (instance === this) {
+                instance = null
+            }
+        }
     }
 }

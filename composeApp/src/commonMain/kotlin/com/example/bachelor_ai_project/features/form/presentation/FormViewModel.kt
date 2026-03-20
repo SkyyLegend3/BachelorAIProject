@@ -236,14 +236,6 @@ class FormViewModel(
         }
     }
 
-    fun clearMappingError() {
-        _uiState.update { it.copy(mappingError = null, mappingSourceError = null) }
-    }
-
-    fun clearError() {
-        _uiState.update { it.copy(submitError = null) }
-    }
-
     fun runOnDeviceLlmTest() {
         val provider = onDeviceModelStatusProvider ?: return
         val current = _uiState.value

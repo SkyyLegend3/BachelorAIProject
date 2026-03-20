@@ -2,6 +2,27 @@
 
 ## Stand: 2026-03-20
 
+## Android: Typbereinigung im On-Device-LMMapping
+- `OnDeviceLlmFormMappingRepository.android.kt` nutzt in den drei relevanten Listen/Signaturen jetzt den korrekten Domain-Typ `FormQuestion` statt `Any`.
+- Entfernt wurden die unsicheren Casts (`UNCHECKED_CAST`) in `buildQuestionGroups`, `buildCompactPrompt` und `buildFocusedTranscript` sowie die provisorische `typealias dynamicQuestion = Any`.
+- Ergebnis: klarere Typen im Mapping-Flow und weniger Cast-Risiko bei Refactorings.
+
+## Android: Neue On-Device-Strategie mit Direct llama.cpp JNI
+- Neuer direkter JNI-Wrapper `com.arm.aichat.direct.DirectLlamaBridge` eingefuehrt (ohne Flow-basiertes `sendUserPrompt`), inkl. nativer Methoden fuer Init, Load, Infer, Cancel, Unload und Shutdown.
+- Native `ai_chat.cpp` um Direct-Entry-Points erweitert: Inferenz laeuft als zusammenhaengender nativer Call mit internem Timeout-/Cancel-Check und klaren Fehlerpraefixen.
+- Neuer Engine-Adapter `DirectLlamaOnDeviceLlmEngine` in `composeApp` hinzugefuegt: einmaliges Modellladen, app-interner Modellpfad, Recovery nach Fehlern und Diagnose-Logs.
+- `OnDeviceLlmEngineProvider.android.kt` priorisiert jetzt den Direct-JNI-Pfad und faellt nur bei Initialisierungsfehlern auf den bisherigen AiChat-Adapter zurueck.
+
+## Android: On-Device-Llama gegen Timeout gehaertet
+- `LlamaCppOnDeviceLlmEngine.completeJson()` auf den vereinbarten Ablauf umgestellt (Model-Check, System-Prompt, Token-Streaming mit Timing-Logs), damit der Inferenzpfad klarer diagnostizierbar bleibt.
+- Modellpfad fuer Native-Zugriff gehaertet: liegt der konfigurierte Pfad nicht im app-internen Speicher, wird das GGUF vor dem Laden in `files/models/` kopiert und von dort geladen.
+- Timeout-Recovery erweitert: nach `Future`-Timeout wird die Engine explizit bereinigt (`cleanUp`/`destroy`), intern verworfen und beim naechsten Lauf neu erstellt.
+- `InferenceEngineImpl.destroy()` setzt jetzt die Singleton-Instanz zurueck, damit nach einem harten Timeout wirklich eine frische Engine instanziiert werden kann.
+
+## Android: Timeout-Wrapper auf Coroutines vereinfacht
+- `LlamaCppOnDeviceLlmEngine.runEngineCallWithTimeout()` nutzt jetzt `withContext(Dispatchers.Default)` + `withTimeout(...)` statt Executor/Future-Wrapper.
+- `modelLoaded` wird erst gesetzt, wenn der Engine-Status nach dem Ladevorgang tatsaechlich `isModelLoaded == true` ist; bei nicht-bereitem Zustand wird mit klarer Fehlermeldung abgebrochen.
+
 ## Android: On-Device LLM-Testbutton im Formular
 - Unter den Formularfeldern wird im Modus `On Device` (nur wenn On-Device-Mapping verfuegbar ist) jetzt ein Button `LLM Test` angezeigt.
 - Der Test fuehrt eine lokale LLM-Testanfrage aus und zeigt danach direkt unter dem Button das Ergebnis `LLM funktioniert` oder `LLM fail` an.

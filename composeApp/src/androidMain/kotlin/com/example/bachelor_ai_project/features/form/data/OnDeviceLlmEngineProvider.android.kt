@@ -24,16 +24,30 @@ fun createDefaultOnDeviceLlmEngine(): OnDeviceLlmEngine? {
 			"predictLength=$predictLength, timeoutMs=$inferenceTimeoutMs, " +
 			"nCtx=$nCtx, temperature=$temperature, threads=$threadsMin-$threadsMax"
 	)
+	println("DEBUG EngineProvider: using DirectLlamaOnDeviceLlmEngine")
 
-	return LlamaCppOnDeviceLlmEngine(
-		modelPath = modelPath,
-		predictLength = predictLength,
-		inferenceTimeoutMs = inferenceTimeoutMs,
-		nCtx = nCtx,
-		temperature = temperature,
-		threadsMin = threadsMin,
-		threadsMax = threadsMax,
-	)
+	return runCatching {
+		DirectLlamaOnDeviceLlmEngine(
+			modelPath = modelPath,
+			predictLength = predictLength,
+			inferenceTimeoutMs = inferenceTimeoutMs,
+			nCtx = nCtx,
+			temperature = temperature,
+			threadsMin = threadsMin,
+			threadsMax = threadsMax,
+		)
+	}.getOrElse { directError ->
+		println("DEBUG OnDeviceLlmEngineProvider: Direct JNI unavailable, fallback to AiChat adapter: ${directError.message}")
+		LlamaCppOnDeviceLlmEngine(
+			modelPath = modelPath,
+			predictLength = predictLength,
+			inferenceTimeoutMs = inferenceTimeoutMs,
+			nCtx = nCtx,
+			temperature = temperature,
+			threadsMin = threadsMin,
+			threadsMax = threadsMax,
+		)
+	}
 }
 
 private fun isAiChatStubActive(): Boolean = runCatching {

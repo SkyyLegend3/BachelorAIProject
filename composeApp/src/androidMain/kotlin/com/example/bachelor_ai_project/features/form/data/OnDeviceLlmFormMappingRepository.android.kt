@@ -4,11 +4,13 @@ import com.example.bachelor_ai_project.core.config.AppConfig
 import com.example.bachelor_ai_project.core.result.AppResult
 import com.example.bachelor_ai_project.core.result.runCatchingResult
 import com.example.bachelor_ai_project.features.form.domain.FormDefinitionProvider
+import com.example.bachelor_ai_project.features.form.domain.FormQuestion
 import com.example.bachelor_ai_project.features.form.domain.FormMappingRepository
 import com.example.bachelor_ai_project.features.form.domain.LlmFieldMappingResponse
 import com.example.bachelor_ai_project.features.form.domain.MappingStrategy
 import com.example.bachelor_ai_project.features.form.domain.OnDeviceFormMappingConfigurable
 import com.example.bachelor_ai_project.features.form.domain.OnDeviceLlmModelStatusProvider
+import com.example.bachelor_ai_project.features.form.domain.SpeakerBlock
 import com.example.bachelor_ai_project.features.form.domain.TranscriptMappingResult
 import com.example.bachelor_ai_project.features.form.domain.TranscriptToFormMapper
 import com.example.bachelor_ai_project.features.transcription.domain.TranscriptionResponse
@@ -22,8 +24,10 @@ import kotlinx.serialization.json.jsonObject
 /**
  * Android-On-Device-Repository fuer lokales LLM-Mapping.
  *
- * Wenn keine lokale LLM-Engine bereitsteht oder die Antwort ungueltig ist,
- * wird auf den bestehenden Keyword-Fallback zurueckgegriffen.
+ * Strategie:
+ * - Erst heuristische Kandidaten erzeugen
+ * - Dann das LLM nur mit kompakten Prompt-Chunks fuer kleine Feldgruppen aufrufen
+ * - Dann mit Heuristik/Fallback mergen
  */
 class OnDeviceLlmFormMappingRepository(
     private val definitionProvider: FormDefinitionProvider,
@@ -38,6 +42,11 @@ class OnDeviceLlmFormMappingRepository(
         val keywords: Set<String>,
     )
 
+    private data class PromptBundle(
+        val systemPrompt: String,
+        val userPrompt: String,
+    )
+
     private enum class CandidateSource {
         LLM,
         HEURISTIC,
@@ -50,17 +59,21 @@ class OnDeviceLlmFormMappingRepository(
     )
 
     private val mapper = TranscriptToFormMapper()
+
     private val json = Json {
         ignoreUnknownKeys = true
         isLenient = true
     }
+
     private val knownFieldIds = definitionProvider.questions.map { it.id }.toSet()
+
     private val normalizedKeyToFieldId = buildMap {
         definitionProvider.questions.forEach { question ->
             put(normalizeKey(question.id), question.id)
             put(normalizeKey(question.label), question.id)
         }
     }
+
     private val fieldSpecs = definitionProvider.questions.map { question ->
         FieldSpec(
             id = question.id,
@@ -69,11 +82,13 @@ class OnDeviceLlmFormMappingRepository(
             keywords = buildQuestionKeywords(question.id, question.label),
         )
     }
+
     private val knownFieldRegexAlternation = definitionProvider.questions
         .flatMap { listOf(it.id, it.label) }
         .map { Regex.escape(it) }
         .sortedByDescending { it.length }
         .joinToString("|")
+
     @Volatile
     private var orthographyCorrectionEnabled: Boolean = true
 
@@ -112,22 +127,46 @@ class OnDeviceLlmFormMappingRepository(
         if (!isOnDeviceLlmModelConfigured()) {
             return AppResult.Error("LLM-Model nicht gefunden oder Pfad ungueltig.")
         }
-        val engine = llmEngine ?: return AppResult.Error("On-Device-LLM-Engine nicht verfuegbar.")
+
+        val engine = llmEngine
+            ?: return AppResult.Error("On-Device-LLM-Engine nicht verfuegbar.")
 
         return runCatchingResult {
-            val systemPrompt = "Du antwortest exakt mit JSON."
-            val userPrompt = "Gib exakt dieses JSON zurueck: {\"ok\":\"ja\"}"
-            val raw = engine.completeJson(systemPrompt = systemPrompt, userPrompt = userPrompt)
+            val systemPrompt = """
+                Du bist ein JSON-Testassistent.
+                Antworte nur mit einem JSON-Objekt.
+                Kein Markdown.
+                Kein Zusatztext.
+            """.trimIndent()
+
+            val userPrompt = """
+                Gib exakt dieses JSON zurueck:
+                {"ok":"ja"}
+            """.trimIndent()
+
+            val raw = engine.completeJson(
+                systemPrompt = systemPrompt,
+                userPrompt = userPrompt,
+            )
+
+            println("DEBUG SelfTest raw=[$raw]")
+
             val normalized = raw.replace("\n", " ")
-            val isOk = Regex("\"ok\"\\s*:\\s*\"ja\"", RegexOption.IGNORE_CASE).containsMatchIn(normalized)
-            require(isOk) { "Ungueltige Testantwort vom LLM." }
+            val isOk = Regex("\"ok\"\\s*:\\s*\"ja\"", RegexOption.IGNORE_CASE)
+                .containsMatchIn(normalized)
+
+            require(isOk) {
+                "LLM-Test fehlgeschlagen. Antwort: [$raw]"
+            }
         }
     }
 
     override suspend fun mapTranscript(response: TranscriptionResponse): AppResult<TranscriptMappingResult> {
         val correctionEnabled = orthographyCorrectionEnabled
+
         val primaryResult = runCatchingResult {
             val speakerBlocks = mapper.map(response).speakerBlocks
+
             val transcriptTextWithSpeakers = if (speakerBlocks.isNotEmpty()) {
                 speakerBlocks.joinToString("\n") { block ->
                     "[${block.speaker.ifBlank { "Sprecher" }}]: ${block.text}"
@@ -145,102 +184,101 @@ class OnDeviceLlmFormMappingRepository(
                 .trim()
 
             val transcriptTextPlain = response.text.ifBlank {
-                if (transcriptTextFromSegments.isNotBlank()) {
-                    transcriptTextFromSegments
-                } else if (speakerBlocks.isNotEmpty()) {
-                    speakerBlocks.joinToString(" ") { it.text.trim() }.trim()
-                } else {
-                    transcriptTextFromWords
+                when {
+                    transcriptTextFromSegments.isNotBlank() -> transcriptTextFromSegments
+                    speakerBlocks.isNotEmpty() -> speakerBlocks.joinToString(" ") { it.text.trim() }.trim()
+                    else -> transcriptTextFromWords
                 }
             }
 
             if (transcriptTextPlain.isBlank() && transcriptTextWithSpeakers.isBlank()) {
-                when (val fallback = fallbackRepository.mapTranscript(response)) {
-                    is AppResult.Success -> {
-                        return@runCatchingResult fallback.data
-                    }
-                    is AppResult.Error -> {
-                        return@runCatchingResult TranscriptMappingResult(
-                            speakerBlocks = speakerBlocks,
-                            fieldAnswers = emptyMap(),
-                        )
-                    }
+                return@runCatchingResult when (val fallback = fallbackRepository.mapTranscript(response)) {
+                    is AppResult.Success -> fallback.data
+                    is AppResult.Error -> TranscriptMappingResult(
+                        speakerBlocks = speakerBlocks,
+                        fieldAnswers = emptyMap(),
+                    )
                 }
             }
 
+            val transcriptForHeuristics =
+                if (transcriptTextPlain.isNotBlank()) transcriptTextPlain else transcriptTextWithSpeakers
+
+            val transcriptForLlmSource =
+                if (transcriptTextWithSpeakers.isNotBlank()) transcriptTextWithSpeakers else transcriptTextPlain
+
             val heuristicAnswers = extractHeuristicAnswers(
-                transcriptText = if (transcriptTextPlain.isNotBlank()) transcriptTextPlain else transcriptTextWithSpeakers,
+                transcriptText = transcriptForHeuristics,
                 speakerBlocks = speakerBlocks,
             )
 
-            val questionsDescription = definitionProvider.questions.joinToString("\n") { q ->
-                "- ${q.id}: ${q.label}"
-            }
-            val answersJsonTemplate = definitionProvider.questions.joinToString(",") { q ->
-                "\"${q.id}\":\"\""
-            }
-
-            val systemPrompt = """
-                Rolle: Du bist ein JSON-Extraktor fuer ein Feedback-Formular.
-
-                Ausgabevorschrift (SEHR WICHTIG):
-                - Gib GENAU EINE ZEILE valides JSON zurueck.
-                - Kein Markdown, keine Backticks, keine Erklaerung, kein Zusatztext.
-                - Nutze EXAKT dieses Schema:
-                  {"answers":{$answersJsonTemplate}}
-                - Die Keys muessen EXAKT den Formularfeld-IDs entsprechen.
-                - Wenn Information fehlt: leerer String "".
-
-                Extraktionsregeln:
-                - Nutze nur explizite Informationen aus dem Transkript.
-                - Erfinde nichts.
-                - Sprache der Werte: Deutsch.
-                - Halte Werte kurz und konkret (maximal 220 Zeichen pro Feld).
-                - Wenn im Dialog eine Frage gestellt wird (z.B. vom Interviewer), uebernimm als Feldwert die inhaltliche Antwort des Gegenuebers, NICHT die Frage selbst.
-                - Frageformulierungen koennen variieren. Ordne nach inhaltlicher Bedeutung zur passenden Formularfrage zu.
-                - Fuer Felder, die nach Name fragen, gib nur den Namen zurueck (ohne Zusatzsaetze).
-                - Uebernimm pro Feld nur den inhaltlich passenden Teil der Antwort.
-                - Wenn eine Antwort mehrere Themen enthaelt, entferne irrelevante Teilsaetze (z. B. private Vorlieben/Hobbys), sofern sie nicht zur Formularfrage gehoeren.
-                - Wenn keine klar passende Information vorliegt, gib fuer das Feld einen leeren String zurueck.
-                ${buildOrthographyInstruction(correctionEnabled)}
-            """.trimIndent()
-
-            val userPrompt = """
-                Aufgabe: Fuelle die Formularfelder aus dem folgenden Gespraech.
-
-                Formularfelder:
-                $questionsDescription
-
-                Transkript (zwischen den Tags):
-                <transkript>
-                ${if (transcriptTextWithSpeakers.isNotBlank()) transcriptTextWithSpeakers else transcriptTextPlain}
-                </transkript>
-
-                Antworte jetzt strikt im JSON-Schema.
-            """.trimIndent()
-
             var llmFailureReason: String? = null
+
             val llmAnswers = when (val engine = llmEngine) {
                 null -> {
                     llmFailureReason = "Keine On-Device-LLM-Engine verfuegbar (Bridge/Modell nicht initialisiert)."
                     emptyMap()
                 }
                 else -> {
-                    val rawResult = runCatching {
-                        engine.completeJson(systemPrompt = systemPrompt, userPrompt = userPrompt)
-                    }
-                    if (rawResult.isFailure) {
-                        val error = rawResult.exceptionOrNull()
-                        llmFailureReason = "LLM-Aufruf fehlgeschlagen: ${error?.message ?: "unbekannter Fehler"}"
-                        println("DEBUG OnDeviceLlmFormMappingRepository: LLM-Fehler, nutze Heuristik/Fallback: ${error?.message}")
-                        emptyMap()
-                    } else {
-                        val extracted = extractAnswers(rawResult.getOrNull().orEmpty())
-                        if (extracted.isEmpty()) {
-                            llmFailureReason = "LLM-Antwort war leer oder nicht im erwarteten JSON-Schema."
+                    val groupedAnswers = mutableMapOf<String, String>()
+                    val questionGroups = buildQuestionGroups()
+
+                    for ((groupIndex, questionGroup) in questionGroups.withIndex()) {
+                        val focusedTranscript = buildFocusedTranscript(
+                            questions = questionGroup,
+                            transcriptText = transcriptForLlmSource,
+                            heuristicAnswers = heuristicAnswers,
+                        )
+
+                        val prompt = buildCompactPrompt(
+                            questions = questionGroup,
+                            transcript = focusedTranscript,
+                            correctionEnabled = correctionEnabled,
+                        )
+
+                        println(
+                            "DEBUG OnDeviceLlmFormMappingRepository: LLM chunk ${groupIndex + 1}/${questionGroups.size}, " +
+                                    "questions=${questionGroup.map { it.id }}, transcriptChars=${focusedTranscript.length}"
+                        )
+
+                        val chunkStartedAt = System.currentTimeMillis()
+
+                        val rawResult = runCatching {
+                            engine.completeJson(
+                                systemPrompt = prompt.systemPrompt,
+                                userPrompt = prompt.userPrompt,
+                            )
                         }
-                        extracted
+
+                        val chunkDuration = System.currentTimeMillis() - chunkStartedAt
+                        println("DEBUG OnDeviceLlmFormMappingRepository: chunk ${groupIndex + 1} done in ${chunkDuration}ms")
+
+                        if (rawResult.isFailure) {
+                            val error = rawResult.exceptionOrNull()
+                            llmFailureReason = "LLM-Aufruf fehlgeschlagen: ${error?.message ?: "unbekannter Fehler"}"
+                            println(
+                                "DEBUG OnDeviceLlmFormMappingRepository: LLM-Fehler in Chunk ${groupIndex + 1}: ${error?.message}"
+                            )
+                            println("DEBUG LLM error class=${error?.javaClass?.name}")
+                            println("DEBUG LLM error message=${error?.message}")
+                            println("DEBUG LLM error cause=${error?.cause?.javaClass?.name}: ${error?.cause?.message}")
+                            continue
+                        }
+
+                        val raw = rawResult.getOrNull().orEmpty()
+                        println("DEBUG OnDeviceLlmFormMappingRepository: raw chunk ${groupIndex + 1}=[$raw]")
+
+                        val extracted = extractAnswers(raw)
+                        if (extracted.isEmpty()) {
+                            if (llmFailureReason.isNullOrBlank()) {
+                                llmFailureReason = "LLM-Antwort war leer oder nicht im erwarteten JSON-Schema."
+                            }
+                        } else {
+                            groupedAnswers.putAll(extracted)
+                        }
                     }
+
+                    groupedAnswers
                 }
             }
 
@@ -259,27 +297,34 @@ class OnDeviceLlmFormMappingRepository(
                 heuristicAnswers = heuristicAnswers,
                 fallbackAnswers = fallbackAnswers,
             )
+
             val answers = mergeOutcome.answers
+
             val mappingStrategy = when {
-                CandidateSource.LLM in mergeOutcome.usedSources && mergeOutcome.usedSources.size == 1 -> MappingStrategy.ON_DEVICE_LLM
-                CandidateSource.LLM in mergeOutcome.usedSources -> MappingStrategy.MIXED
-                mergeOutcome.usedSources.isNotEmpty() -> MappingStrategy.HEURISTIC_FALLBACK
-                else -> MappingStrategy.UNKNOWN
+                CandidateSource.LLM in mergeOutcome.usedSources && mergeOutcome.usedSources.size == 1 ->
+                    MappingStrategy.ON_DEVICE_LLM
+                CandidateSource.LLM in mergeOutcome.usedSources ->
+                    MappingStrategy.MIXED
+                mergeOutcome.usedSources.isNotEmpty() ->
+                    MappingStrategy.HEURISTIC_FALLBACK
+                else ->
+                    MappingStrategy.UNKNOWN
             }
 
             val effectiveLlmFailureReason = when (mappingStrategy) {
                 MappingStrategy.ON_DEVICE_LLM,
                 MappingStrategy.MIXED,
                 MappingStrategy.CLOUD_LLM,
-                -> null
+                    -> null
+
                 MappingStrategy.HEURISTIC_FALLBACK,
                 MappingStrategy.UNKNOWN,
-                -> llmFailureReason
+                    -> llmFailureReason
             }
 
             println(
                 "DEBUG OnDeviceLlmFormMappingRepository: answers llm=${sanitizedLlmAnswers.keys} " +
-                    "heuristic=${heuristicAnswers.keys} fallback=${fallbackAnswers.keys} final=${answers.keys}"
+                        "heuristic=${heuristicAnswers.keys} fallback=${fallbackAnswers.keys} final=${answers.keys}"
             )
             println("DEBUG OnDeviceLlmFormMappingRepository: orthographyCorrectionEnabled=$correctionEnabled")
 
@@ -308,6 +353,137 @@ class OnDeviceLlmFormMappingRepository(
         }
     }
 
+    private fun buildQuestionGroups(): List<List<FormQuestion>> {
+        val questions = definitionProvider.questions
+        if (questions.isEmpty()) return emptyList()
+
+        val nameQuestions = questions.filter { q ->
+            val idNorm = normalizeKey(q.id)
+            val labelNorm = normalizeKey(q.label)
+            idNorm.contains("name") || labelNorm.contains("name") || labelNorm.contains("heiss")
+        }
+
+        val nonNameQuestions = questions - nameQuestions
+
+        val result = mutableListOf<List<FormQuestion>>()
+
+        if (nameQuestions.isNotEmpty()) {
+            result += nameQuestions
+        }
+
+        result += nonNameQuestions.chunked(1)
+
+        return result
+    }
+
+    private fun buildCompactPrompt(
+        questions: List<FormQuestion>,
+        transcript: String,
+        correctionEnabled: Boolean,
+    ): PromptBundle {
+        val questionsDescription = questions.joinToString("\n") { q ->
+            "- ${q.id}: ${q.label}"
+        }
+
+        val answersJsonTemplate = questions.joinToString(",") { q ->
+            "\"${q.id}\":\"\""
+        }
+
+        val orthographyInstruction = if (correctionEnabled) {
+            "Korrigiere nur offensichtliche ASR-Fehler bei hoher Sicherheit."
+        } else {
+            "Keine aktive Rechtschreibkorrektur."
+        }
+
+        val systemPrompt = """
+        Antworte nur mit JSON.
+        Schema:
+        {"answers":{$answersJsonTemplate}}
+        Nur Infos aus dem Transkript.
+        Fehlende Werte: "".
+        Kurz und auf Deutsch.
+        """.trimIndent()
+
+        val userPrompt = """
+        Felder:
+        $questionsDescription
+
+        Text:
+        ${transcript.take(MAX_TRANSCRIPT_CHARS_PER_CHUNK)}
+        """.trimIndent()
+
+        return PromptBundle(
+            systemPrompt = systemPrompt,
+            userPrompt = userPrompt,
+        )
+    }
+
+    private fun buildFocusedTranscript(
+        questions: List<FormQuestion>,
+        transcriptText: String,
+        heuristicAnswers: Map<String, String>,
+    ): String {
+        if (transcriptText.isBlank()) return ""
+
+        val normalizedTranscript = transcriptText.trim()
+        if (normalizedTranscript.length <= MAX_TRANSCRIPT_CHARS_PER_CHUNK) {
+            return normalizedTranscript
+        }
+
+        val sentences = normalizedTranscript
+            .replace("\n", " \n ")
+            .split(Regex("(?<=[.!?])\\s+|\\n"))
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+
+        if (sentences.isEmpty()) {
+            return normalizedTranscript.take(MAX_TRANSCRIPT_CHARS_PER_CHUNK)
+        }
+
+        val wantedFieldIds = questions.map { it.id }.toSet()
+        val relatedSpecs = fieldSpecs.filter { it.id in wantedFieldIds }
+
+        val scored = sentences.map { sentence ->
+            var score = 0
+            val norm = normalizeKey(sentence)
+
+            relatedSpecs.forEach { field ->
+                field.keywords.forEach { token ->
+                    if (token.isNotBlank() && norm.contains(token)) {
+                        score += 3
+                    }
+                }
+                if (field.normalizedLabel.isNotBlank() && norm.contains(field.normalizedLabel)) {
+                    score += 2
+                }
+                heuristicAnswers[field.id]?.let { heuristic ->
+                    val heuristicNorm = normalizeKey(heuristic)
+                    if (heuristicNorm.isNotBlank() && norm.contains(heuristicNorm.take(24))) {
+                        score += 2
+                    }
+                }
+            }
+
+            if (sentence.contains(":")) score += 1
+            if (sentence.contains("?")) score += 1
+
+            sentence to score
+        }
+
+        val picked = scored
+            .sortedByDescending { it.second }
+            .map { it.first }
+            .distinct()
+            .take(12)
+
+        val joined = picked.joinToString("\n")
+        return if (joined.isNotBlank()) {
+            joined.take(MAX_TRANSCRIPT_CHARS_PER_CHUNK)
+        } else {
+            normalizedTranscript.take(MAX_TRANSCRIPT_CHARS_PER_CHUNK)
+        }
+    }
+
     private fun extractAnswers(raw: String): Map<String, String> {
         val candidates = buildJsonCandidates(raw)
         for (candidate in candidates) {
@@ -324,6 +500,7 @@ class OnDeviceLlmFormMappingRepository(
         val fenced = Regex("""```(?:json)?\s*({[\s\S]*?})\s*```""")
             .findAll(trimmed)
             .map { it.groupValues[1].trim() }
+
         val balanced = extractBalancedJsonObjects(trimmed)
 
         return buildList {
@@ -342,7 +519,10 @@ class OnDeviceLlmFormMappingRepository(
             return normalizeAnswers(response.answers)
         }
 
-        val rootObject = runCatching { json.parseToJsonElement(cleaned).jsonObject }.getOrNull() ?: return emptyMap()
+        val rootObject = runCatching {
+            json.parseToJsonElement(cleaned).jsonObject
+        }.getOrNull() ?: return emptyMap()
+
         val answersObject = rootObject["answers"]?.jsonObject
 
         val candidateAnswers = when {
@@ -382,10 +562,11 @@ class OnDeviceLlmFormMappingRepository(
         return normalizeAnswers(inlineBased)
     }
 
-    private fun JsonObject.toStringMap(): Map<String, String> = entries.mapNotNull { (key, value) ->
-        val primitive = value as? JsonPrimitive ?: return@mapNotNull null
-        primitive.contentOrNull?.let { key to it }
-    }.toMap()
+    private fun JsonObject.toStringMap(): Map<String, String> =
+        entries.mapNotNull { (key, value) ->
+            val primitive = value as? JsonPrimitive ?: return@mapNotNull null
+            primitive.contentOrNull?.let { key to it }
+        }.toMap()
 
     private fun normalizeAnswers(rawAnswers: Map<String, String>): Map<String, String> {
         if (rawAnswers.isEmpty()) return emptyMap()
@@ -510,7 +691,6 @@ class OnDeviceLlmFormMappingRepository(
         val bestScore = best.second
         val secondBestScore = scored.map { it.second }.sortedDescending().getOrElse(1) { 0 }
 
-        // Nur klar besseren Teil uebernehmen, sonst Original belassen.
         return if (bestScore >= 2 && bestScore > secondBestScore) best.first else candidate
     }
 
@@ -518,12 +698,12 @@ class OnDeviceLlmFormMappingRepository(
         val idNorm = normalizeKey(field.id)
         val labelNorm = field.normalizedLabel
         return idNorm.contains("learn") ||
-            idNorm.contains("lesson") ||
-            labelNorm.contains("gelernt") ||
-            labelNorm.contains("lernen") ||
-            labelNorm.contains("mitgenommen") ||
-            labelNorm.contains("naechstes") ||
-            labelNorm.contains("verbessern")
+                idNorm.contains("lesson") ||
+                labelNorm.contains("gelernt") ||
+                labelNorm.contains("lernen") ||
+                labelNorm.contains("mitgenommen") ||
+                labelNorm.contains("naechstes") ||
+                labelNorm.contains("verbessern")
     }
 
     private fun scoreClauseForField(clause: String, field: FieldSpec): Int {
@@ -531,6 +711,7 @@ class OnDeviceLlmFormMappingRepository(
         if (norm.isBlank()) return 0
 
         var score = 0
+
         field.keywords.forEach { token ->
             if (token.isNotBlank() && norm.contains(token)) score += 2
         }
@@ -613,7 +794,7 @@ class OnDeviceLlmFormMappingRepository(
 
     private fun extractHeuristicAnswers(
         transcriptText: String,
-        speakerBlocks: List<com.example.bachelor_ai_project.features.form.domain.SpeakerBlock>,
+        speakerBlocks: List<SpeakerBlock>,
     ): Map<String, String> {
         val answers = mutableMapOf<String, String>()
         val sentences = transcriptText
@@ -657,7 +838,7 @@ class OnDeviceLlmFormMappingRepository(
     }
 
     private fun extractAnswerFromQuestionTransition(
-        speakerBlocks: List<com.example.bachelor_ai_project.features.form.domain.SpeakerBlock>,
+        speakerBlocks: List<SpeakerBlock>,
         field: FieldSpec,
     ): String? {
         if (speakerBlocks.size < 2) return null
@@ -701,7 +882,9 @@ class OnDeviceLlmFormMappingRepository(
 
     private fun isNameField(field: FieldSpec): Boolean {
         val idNorm = normalizeKey(field.id)
-        return idNorm.contains("name") || field.normalizedLabel.contains("heiss") || field.normalizedLabel.contains("name")
+        return idNorm.contains("name") ||
+                field.normalizedLabel.contains("heiss") ||
+                field.normalizedLabel.contains("name")
     }
 
     private fun findBestAnswerSentence(
@@ -734,6 +917,7 @@ class OnDeviceLlmFormMappingRepository(
         val segments = text.split("?")
             .map { it.trim() }
             .filter { it.isNotBlank() }
+
         if (segments.size < 2) return null
 
         for (index in 0 until segments.lastIndex) {
@@ -758,13 +942,15 @@ class OnDeviceLlmFormMappingRepository(
             .replace(Regex("""^\s*(sprecher\s*\d+|speaker\s*\d+)\s*[:\-]\s*""", RegexOption.IGNORE_CASE), "")
             .trim()
 
-        // Wenn im Segment schon die naechste Frage startet, nehmen wir nur den Teil davor.
         val splitByQuestionStarter = Regex(
             pattern = """(?i)\b(was|wie|warum|wieso|weshalb|welche|welcher|wer)\b[^.?!]{0,120}$"""
         ).find(withoutSpeakerPrefix)
 
         val cut = splitByQuestionStarter?.range?.first ?: withoutSpeakerPrefix.length
-        return withoutSpeakerPrefix.substring(0, cut).trim().trimEnd('.', ';', ',')
+        return withoutSpeakerPrefix
+            .substring(0, cut)
+            .trim()
+            .trimEnd('.', ';', ',')
     }
 
     private fun scoreSentenceForField(sentence: String, field: FieldSpec): Int {
@@ -783,10 +969,16 @@ class OnDeviceLlmFormMappingRepository(
 
         if (isNameField(field)) {
             val compact = sentence.trim()
-            if (compact.length <= 40 && !compact.contains('?') && !compact.contains('.') && compact.split(Regex("\\s+")).size <= 3) {
+            if (
+                compact.length <= 40 &&
+                !compact.contains('?') &&
+                !compact.contains('.') &&
+                compact.split(Regex("\\s+")).size <= 3
+            ) {
                 score += 2
             }
         }
+
         return score
     }
 
@@ -818,24 +1010,23 @@ class OnDeviceLlmFormMappingRepository(
         if (trimmed.contains('?')) return true
 
         val lower = trimmed.lowercase()
-        val startsLikeQuestion = lower.startsWith("was ") ||
-            lower.startsWith("wie ") ||
-            lower.startsWith("warum ") ||
-            lower.startsWith("wieso ") ||
-            lower.startsWith("weshalb ") ||
-            lower.startsWith("welche") ||
-            lower.startsWith("welcher") ||
-            lower.startsWith("kannst du") ||
-            lower.startsWith("kannst du mir") ||
-            lower.startsWith("erzaehl") ||
-            lower.startsWith("erzähl")
-        return startsLikeQuestion
+        return lower.startsWith("was ") ||
+                lower.startsWith("wie ") ||
+                lower.startsWith("warum ") ||
+                lower.startsWith("wieso ") ||
+                lower.startsWith("weshalb ") ||
+                lower.startsWith("welche") ||
+                lower.startsWith("welcher") ||
+                lower.startsWith("kannst du") ||
+                lower.startsWith("kannst du mir") ||
+                lower.startsWith("erzaehl") ||
+                lower.startsWith("erzähl")
     }
 
     private fun matchesFieldQuestion(questionText: String, field: FieldSpec): Boolean {
         val norm = normalizeKey(questionText)
         return field.keywords.any { token -> token.isNotBlank() && norm.contains(token) } ||
-            (field.normalizedLabel.isNotBlank() && norm.contains(field.normalizedLabel))
+                (field.normalizedLabel.isNotBlank() && norm.contains(field.normalizedLabel))
     }
 
     private fun looksLikeQuestionEcho(candidateAnswer: String, field: FieldSpec): Boolean {
@@ -845,7 +1036,11 @@ class OnDeviceLlmFormMappingRepository(
 
         val normalized = normalizeKey(trimmed)
         if (normalized == field.normalizedLabel) return true
-        val labelOverlap = field.keywords.count { token -> token.isNotBlank() && normalized.contains(token) }
+
+        val labelOverlap = field.keywords.count { token ->
+            token.isNotBlank() && normalized.contains(token)
+        }
+
         return labelOverlap >= 3 && normalized.length <= field.normalizedLabel.length + 16
     }
 
@@ -853,7 +1048,6 @@ class OnDeviceLlmFormMappingRepository(
         if (text.isBlank()) return null
 
         val patterns = listOf(
-            // Deckt u.a. "ich heiss", "ich heiß", "ich heiße", "mein Name ist" ab.
             """(?i)\b(?:ich\s+hei(?:ss|ß)e?|mein\s+name\s+ist|ich\s+bin(?:\s+(?:der|die))?)\s+([\p{L}][\p{L}'\-]{1,30}(?:\s+[\p{L}][\p{L}'\-]{1,30}){0,2})""",
             """(?i)\bname\s*[:\-]?\s*([\p{L}][\p{L}'\-]{1,30}(?:\s+[\p{L}][\p{L}'\-]{1,30}){0,2})""",
         )
@@ -886,16 +1080,7 @@ class OnDeviceLlmFormMappingRepository(
         }
     }
 
-    private fun buildOrthographyInstruction(enabled: Boolean): String {
-        return if (enabled) {
-            """
-            - Vor der Feldzuordnung korrigiere offensichtliche ASR-/Whisper-Schreibfehler inhaltlich, wenn der gemeinte deutsche Begriff oder Name eindeutig ist.
-            - Nutze dazu lautnahe Aehnlichkeit und den Gespraechskontext (z. B. Fachwort, Personenname, gaengige deutsche Schreibweise).
-            - Korrigiere nur bei hoher Sicherheit. Bei Unsicherheit lieber Originaltext belassen.
-            """.trimIndent()
-        } else {
-            "- Uebernehme Transkriptinhalte moeglichst woertlich und fuehre keine aktive Rechtschreibkorrektur durch."
-        }
+    private companion object {
+        private const val MAX_TRANSCRIPT_CHARS_PER_CHUNK = 500
     }
 }
-
