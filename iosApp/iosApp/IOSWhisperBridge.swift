@@ -26,7 +26,7 @@ final class IOSWhisperBridge: NSObject, IosWhisperBridge {
             return ""
         }
 
-        guard FileManager.default.fileExists(atPath: audioFilePath) else {
+        guard let resolvedAudioPath = resolveAudioPath(preferredPath: audioFilePath) else {
             lastError = "Audio-Datei existiert nicht: \(audioFilePath)"
             print("DEBUG IOSWhisperBridge: \(lastError)")
             return ""
@@ -36,7 +36,7 @@ final class IOSWhisperBridge: NSObject, IosWhisperBridge {
         do {
             return try transcribeWithWhisperModule(
                 modelPath: resolvedModelPath,
-                audioFilePath: audioFilePath,
+                audioFilePath: resolvedAudioPath,
                 language: language
             )
         } catch {
@@ -89,6 +89,37 @@ final class IOSWhisperBridge: NSObject, IosWhisperBridge {
             let documentsModel = documents.appendingPathComponent("models/whisper-base.bin").path
             if fileManager.fileExists(atPath: documentsModel) {
                 return documentsModel
+            }
+        }
+
+        return nil
+    }
+
+    fileprivate func resolveAudioPath(preferredPath: String?) -> String? {
+        let fileManager = FileManager.default
+        let raw = preferredPath?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if raw.isEmpty { return nil }
+
+        if fileManager.fileExists(atPath: raw) {
+            return raw
+        }
+
+        if let fileUrl = URL(string: raw), fileUrl.isFileURL {
+            let path = fileUrl.path
+            if fileManager.fileExists(atPath: path) {
+                return path
+            }
+        }
+
+        if let decoded = raw.removingPercentEncoding {
+            if fileManager.fileExists(atPath: decoded) {
+                return decoded
+            }
+            if let decodedUrl = URL(string: decoded), decodedUrl.isFileURL {
+                let decodedPath = decodedUrl.path
+                if fileManager.fileExists(atPath: decodedPath) {
+                    return decodedPath
+                }
             }
         }
 

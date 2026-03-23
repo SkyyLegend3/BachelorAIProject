@@ -129,6 +129,18 @@ class FormViewModel(
                             MappingStrategy.UNKNOWN -> "Mapping-Quelle: Unbekannt"
                         }
                     )
+                    if (mode == FormAutomationMode.ON_DEVICE) {
+                        appendLog(
+                            when (mappingResult.mappingStrategy) {
+                                MappingStrategy.ON_DEVICE_LLM -> "On-Device: LLM genutzt"
+                                MappingStrategy.MIXED -> "On-Device: LLM + Fallback/Heuristik genutzt"
+                                MappingStrategy.HEURISTIC_FALLBACK,
+                                MappingStrategy.UNKNOWN,
+                                -> "On-Device: Fallback/Heuristik genutzt"
+                                MappingStrategy.CLOUD_LLM -> "On-Device: Cloud-LLM Rueckfall"
+                            }
+                        )
+                    }
                     val sourceErrorMessage = if (
                         mode == FormAutomationMode.ON_DEVICE &&
                         (mappingResult.mappingStrategy == MappingStrategy.HEURISTIC_FALLBACK || mappingResult.mappingStrategy == MappingStrategy.UNKNOWN) &&

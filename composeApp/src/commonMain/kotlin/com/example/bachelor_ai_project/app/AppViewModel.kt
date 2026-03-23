@@ -63,6 +63,9 @@ class AppViewModel(
         vm.onRecordingFinished = { filePath ->
             transcriptionViewModel.transcribe(filePath)
         }
+        vm.onFileSelected = { filePath ->
+            transcriptionViewModel.transcribe(filePath)
+        }
     }
 
     init {

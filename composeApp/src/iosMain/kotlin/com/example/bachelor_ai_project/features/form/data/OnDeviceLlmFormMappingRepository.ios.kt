@@ -11,6 +11,7 @@ import com.example.bachelor_ai_project.features.form.domain.OnDeviceFormMappingC
 import com.example.bachelor_ai_project.features.form.domain.OnDeviceLlmModelStatusProvider
 import com.example.bachelor_ai_project.features.form.domain.TranscriptMappingResult
 import com.example.bachelor_ai_project.features.form.domain.TranscriptToFormMapper
+import kotlinx.cinterop.ExperimentalForeignApi
 import com.example.bachelor_ai_project.features.transcription.domain.TranscriptionResponse
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -18,6 +19,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import platform.Foundation.NSFileManager
+import platform.Foundation.NSHomeDirectory
 
 /**
  * iOS-On-Device-Repository fuer lokales LLM-Mapping.
@@ -81,9 +83,7 @@ class OnDeviceLlmFormMappingRepository(
     }
 
     override fun isOnDeviceLlmModelConfigured(): Boolean {
-        val modelPath = AppConfig.llamaModelPath.trim()
-        if (modelPath.isBlank()) return false
-        return NSFileManager.defaultManager.fileExistsAtPath(modelPath)
+        return resolveExistingLlamaModelPath() != null
     }
 
     override fun isOnDeviceLlmModelReady(): Boolean {
@@ -91,6 +91,45 @@ class OnDeviceLlmFormMappingRepository(
     }
 
     override fun isOnDeviceLlmModelLoading(): Boolean = false
+
+    @OptIn(ExperimentalForeignApi::class)
+    private fun resolveExistingLlamaModelPath(): String? {
+        val fileManager = NSFileManager.defaultManager
+        val configured = AppConfig.llamaModelPath.trim()
+
+        if (configured.isNotBlank() && fileManager.fileExistsAtPath(configured)) {
+            return configured
+        }
+
+        val docsModelsDir = NSHomeDirectory() + "/Documents/models"
+        val defaultDocsModel = "$docsModelsDir/model.gguf"
+        if (fileManager.fileExistsAtPath(defaultDocsModel)) {
+            return defaultDocsModel
+        }
+
+        if (configured.isNotBlank()) {
+            val configuredName = configured.substringAfterLast('/')
+            if (configuredName.isNotBlank()) {
+                val docsConfiguredName = "$docsModelsDir/$configuredName"
+                if (fileManager.fileExistsAtPath(docsConfiguredName)) {
+                    return docsConfiguredName
+                }
+            }
+        }
+
+        val files = fileManager.contentsOfDirectoryAtPath(docsModelsDir, error = null) as? List<*>
+        val firstGguf = files
+            ?.mapNotNull { it as? String }
+            ?.firstOrNull { it.lowercase().endsWith(".gguf") }
+        if (firstGguf != null) {
+            val docsAnyGguf = "$docsModelsDir/$firstGguf"
+            if (fileManager.fileExistsAtPath(docsAnyGguf)) {
+                return docsAnyGguf
+            }
+        }
+
+        return null
+    }
 
     override suspend fun mapTranscript(response: TranscriptionResponse): AppResult<TranscriptMappingResult> {
         val correctionEnabled = orthographyCorrectionEnabled
@@ -212,9 +251,18 @@ class OnDeviceLlmFormMappingRepository(
                 is AppResult.Error -> emptyMap()
             }
 
-            val sanitizedLlmAnswers = sanitizeLlmAnswers(llmAnswers)
+            val transcriptEvidenceText = if (transcriptTextPlain.isNotBlank()) {
+                transcriptTextPlain
+            } else {
+                transcriptTextWithSpeakers
+            }
+
+            val sanitizedLlmAnswers = filterLlmAnswersByTranscriptEvidence(
+                llmAnswers = sanitizeLlmAnswers(llmAnswers),
+                transcriptText = transcriptEvidenceText,
+            )
             if (llmAnswers.isNotEmpty() && sanitizedLlmAnswers.isEmpty() && llmFailureReason.isNullOrBlank()) {
-                llmFailureReason = "LLM-Antwort wurde als unbrauchbar verworfen."
+                llmFailureReason = "LLM-Antwort enthielt Inhalte, die im Transkript nicht belegbar waren."
             }
 
             val mergeOutcome = mergeAnswersPerField(
@@ -384,6 +432,72 @@ class OnDeviceLlmFormMappingRepository(
         }
 
         return llmAnswers
+    }
+
+    private fun filterLlmAnswersByTranscriptEvidence(
+        llmAnswers: Map<String, String>,
+        transcriptText: String,
+    ): Map<String, String> {
+        if (llmAnswers.isEmpty()) return emptyMap()
+        if (transcriptText.isBlank()) return emptyMap()
+
+        val transcriptNorm = normalizeTextForEvidence(transcriptText)
+        val transcriptTokens = tokenizeForEvidence(transcriptText).toSet()
+
+        return llmAnswers.filterValues { answer ->
+            isAnswerGroundedInTranscript(
+                answer = answer,
+                transcriptNorm = transcriptNorm,
+                transcriptTokens = transcriptTokens,
+            )
+        }
+    }
+
+    private fun isAnswerGroundedInTranscript(
+        answer: String,
+        transcriptNorm: String,
+        transcriptTokens: Set<String>,
+    ): Boolean {
+        val raw = answer.trim()
+        if (raw.isBlank()) return false
+
+        val answerNorm = normalizeTextForEvidence(raw)
+        if (answerNorm.length < 3) return false
+
+        // Strikt: Wenn die normalisierte Antwort als Phrase vorkommt, ist sie belegt.
+        if (transcriptNorm.contains(answerNorm)) return true
+
+        val answerTokens = tokenizeForEvidence(raw)
+        if (answerTokens.isEmpty()) return false
+
+        // Keine Halluzination: alle inhaltstragenden Tokens muessen im Transkript vorkommen.
+        return answerTokens.all { it in transcriptTokens }
+    }
+
+    private fun normalizeTextForEvidence(value: String): String = value
+        .lowercase()
+        .replace("ä", "ae")
+        .replace("ö", "oe")
+        .replace("ü", "ue")
+        .replace("ß", "ss")
+        .replace(Regex("[^a-z0-9]+"), " ")
+        .replace(Regex("\\s+"), " ")
+        .trim()
+
+    private fun tokenizeForEvidence(value: String): List<String> {
+        val stopWords = setOf(
+            "ich", "du", "er", "sie", "es", "wir", "ihr", "sie",
+            "der", "die", "das", "ein", "eine", "einer", "einem", "einen",
+            "und", "oder", "aber", "mit", "ohne", "im", "in", "am", "an", "auf", "zu",
+            "ist", "war", "sind", "waren", "hat", "habe", "haben", "wurde", "worden",
+            "dass", "das", "dem", "den", "des", "von", "fuer", "fur", "bei", "als"
+        )
+
+        return normalizeTextForEvidence(value)
+            .split(" ")
+            .map { it.trim() }
+            .filter { it.length >= 3 }
+            .filterNot { it in stopWords }
     }
 
     private fun mergeAnswersPerField(

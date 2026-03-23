@@ -8,6 +8,9 @@ data class RecordingUiState(
     val isRecording: Boolean = false,
     val isPermissionGranted: Boolean = false,
     val recordingFilePath: String? = null,
+    val uploadedFilePath: String? = null,
+    val isLoadingFile: Boolean = false,
+    val shouldOpenFilePicker: Boolean = false,
     val error: String? = null,
 )
 

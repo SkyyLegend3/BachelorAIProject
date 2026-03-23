@@ -1,5 +1,70 @@
 # Changelog
 
+## Stand: 2026-03-23
+
+## Bugfix: AudioFilePicker final stabil auf Android + iOS
+- iOS On-Device UI-Log erweitert: Im Prozess-Log wird jetzt explizit ausgewiesen, ob On-Device-LMMapping die LLM-Antwort genutzt hat oder auf Fallback/Heuristik lief.
+  - Neue Logzeilen in `FormViewModel`: `On-Device: LLM genutzt`, `On-Device: LLM + Fallback/Heuristik genutzt`, `On-Device: Fallback/Heuristik genutzt`.
+- iOS On-Device Anti-Halluzinations-Fix im Formular-Mapping:
+  - `OnDeviceLlmFormMappingRepository.ios.kt` filtert LLM-Antworten jetzt strikt gegen Transkript-Evidenz.
+  - Antworten werden nur uebernommen, wenn sie als Phrase im Transkript vorkommen oder alle inhaltstragenden Tokens im Transkript belegbar sind.
+  - Nicht belegbare LLM-Inhalte werden verworfen und fallen auf Heuristik/Fallback zurueck.
+  - Ziel: Keine erfundenen Learnings/Antworten mehr bei iOS On-Device-LMMapping.
+- iOS Crashfix (llama): `llama_batch_add` in `iosApp/iosApp/LibLlama.swift` gehaertet.
+  - Entferntes Force-Unwrap auf `batch.seq_id[...]!` durch Guard-Checks.
+  - Defensiver Schutz gegen nil-Pointer in `token/pos/n_seq_id/seq_id/logits`.
+  - Batch-Overflow-Schutz eingebaut und Batch-Kapazitaet auf `2048` angehoben (statt `512`).
+  - Ziel: `Fatal error: Unexpectedly found nil while unwrapping an Optional value` bei iOS-Inferenz vermeiden.
+- iOS-Dateipicker wurde aus fehleranfälliger Swift/Kotlin-Bridge entfernt und direkt in `composeApp/src/iosMain/kotlin/com/example/bachelor_ai_project/features/recording/ui/RequestAudioFilePickerImpl.ios.kt` implementiert.
+- iOS nutzt jetzt nativen `UIDocumentPickerViewController` über Kotlin/Native (`forOpeningContentTypes = listOf(UTTypeAudio)`), inklusive Cancel-/Fehlerbehandlung und Rückgabe der gewählten Datei-URL.
+- Defekte iOS-Bridge-Experimente wurden bereinigt; `iosApp/iosApp/IOSAudioFilePickerBridge.swift` ist nun ein harmloser no-op Stub.
+- `iosApp/iosApp/iOSApp.swift` registriert keinen separaten Audio-Picker-Bridge-Call mehr.
+- Alte Registry-Reste für den verworfenen Bridge-Ansatz wurden entfernt:
+  - `composeApp/src/commonMain/kotlin/com/example/bachelor_ai_project/core/util/IosAudioFilePickerRegistry.kt`
+  - `composeApp/src/iosMain/kotlin/com/example/bachelor_ai_project/core/util/IosAudioFilePickerRegistry.ios.kt`
+  - `composeApp/src/androidMain/kotlin/com/example/bachelor_ai_project/core/util/IosAudioFilePickerRegistry.android.kt`
+- `composeApp/src/iosMain/kotlin/com/example/bachelor_ai_project/core/util/AudioFilePicker.ios.kt` wurde als klarer Fallback ohne Registry-Abhängigkeit bereinigt.
+- Android-Picker bleibt Compose-basiert über `ActivityResultContracts.OpenDocument()` in `composeApp/src/androidMain/kotlin/com/example/bachelor_ai_project/features/recording/ui/RequestAudioFilePickerImpl.android.kt`.
+- Android Cloud-Transkription nach Dateiupload gefixt: `readFileBytes(...)` unter Android unterstützt jetzt `content://`-URIs aus dem Picker via `ContentResolver` (statt nur `File(path)`).
+  - Datei: `composeApp/src/androidMain/kotlin/com/example/bachelor_ai_project/features/transcription/domain/FileReader.android.kt`
+  - Behebt Fehler wie `open failed: ENOENT` bei Pfaden im Format `content://...`.
+- Android Cloud `invalid file format` nach Dateiupload gefixt:
+  - Dateipicker kopiert die gewählte Datei jetzt in eine lokale Cache-Datei und gibt einen echten Dateipfad zurück (`RequestAudioFilePickerImpl.android.kt`).
+  - OpenAI-Multipart nutzt nun dynamischen Dateinamen + abgeleiteten MIME-Type statt statischem `recording.m4a`/`audio/mp4` (`OpenAiTranscriptionRepository.kt`).
+  - `Content-Disposition` des Datei-Parts wurde auf valides `form-data; name="file"; filename="..."` korrigiert (vorher fehleranfällig nur `filename="..."`).
+  - Upload-Dateiendung wird jetzt zusätzlich aus Magic-Bytes erkannt (z. B. WAV/OGG/MP4), damit Name/MIME konsistent zum echten Dateicontent sind.
+  - Multipart-Header wurden vereinfacht (Ktor setzt `name` selbst), um doppelte/inkonsistente `Content-Disposition`-Parameter zu vermeiden.
+  - Diagnose erweitert: Upload-Log enthält jetzt Dateiname, Content-Type, Byte-Länge, Magic-Bytes (hex/ascii) und MP4-`ftyp`-Brand zur schnellen Analyse von Formatfehlern.
+  - Zusätzlicher Android-Fix: Wenn der Upload `ftyp=3gp4` hat, wird die Audiospur beim Dateiauswählen in einen MP4/M4A-Container remuxt, bevor sie an OpenAI gesendet wird (`RequestAudioFilePickerImpl.android.kt`).
+- Upload-Confirm-Flow korrigiert: Der Haken-Button stößt jetzt tatsächlich die Transkription an (`confirmUploadedFileSelection()`), statt nur erneut den Dateipfad zu setzen.
+- Recording-UI angepasst (Android + iOS / commonMain):
+  - `Datei hochladen`, `X` und `✓` sind bei gewählter Datei jetzt in **einer gemeinsamen Zeile**.
+  - `X` und `✓` sind als normale Buttons im selben Stil dargestellt, mit **weißem Text auf lila Hintergrund**.
+  - Der ausgewählte Dateiname wird unterhalb der Button-Reihe angezeigt.
+- Neues Hilfsskript für Android-Modell-Setup nach App-Neuinstallation:
+  - `scripts/push_android_models.sh`
+  - Pusht lokales Whisper + Llama per `adb` in die App-Sandbox (`run-as`) und nutzt bei Bedarf Werte aus `local.properties` (`llama.model.path`, `whisper.model.path`).
+  - Ergänzt: Quellpfade können jetzt ebenfalls aus `local.properties` kommen (`llama.model.push.src`, `whisper.model.push.src`), mit Priorität `CLI > local.properties > Fallback`.
+  - Fix: robuster `run-as`-Kopierschritt mit expliziten Zielverzeichnissen (`mkdir -p` je Zielpfad) und Debug-Ausgabe der aufgelösten Zielpfade.
+  - Fix: temporäre Push-Dateien liegen nun unter `/data/local/tmp/.bachelor_models` statt `/sdcard`, damit Zugriffsprobleme beim `run-as`-Copy reduziert werden.
+- Neues Hilfsskript für iOS-Simulator-Modell-Setup nach App-Neuinstallation:
+  - `scripts/push_ios_models.sh`
+  - Kopiert lokales Whisper + Llama via `xcrun simctl get_app_container ... data` nach `Documents/models` im Simulator-Container.
+  - Unterstützt `local.properties`-Quellpfade (`llama.model.push.src`, `whisper.model.push.src`) sowie CLI-Overrides.
+- `AppViewModel` verdrahtet Datei-Upload jetzt explizit auf `transcriptionViewModel.transcribe(filePath)`.
+- iOS-On-Device-LLM-Statusprüfung erweitert: Neben `LLAMA_MODEL_PATH` werden jetzt auch `Documents/models/model.gguf`, ein konfigurierter Dateiname in `Documents/models/` sowie die erste gefundene `*.gguf` in `Documents/models` erkannt.
+- iOS-Bridge (`IOSLlamaBridge.swift`) sucht ebenfalls in `Documents/models` nach beliebiger `*.gguf`, falls `model.gguf` nicht vorhanden ist.
+- iOS-Dateiupload/Transkription gefixt: Upload-Pfade werden nun robust als lokale Pfade verarbeitet (statt `file://...` URI-String mit `%20`), damit lokale Whisper-Transkription die Datei findet.
+  - `RequestAudioFilePickerImpl.ios.kt` gibt bevorzugt `NSURL.path` weiter.
+  - `IOSWhisperBridge.swift` normalisiert eingehende Pfade (`file://`, percent-encoding) vor `fileExists` und Transkription.
+- iOS-Simulator-Crash beim Transkribieren behoben: Metal Residency Sets werden im Simulator deaktiviert, um `MTLDebugDevice newResidencySetWithDescriptor`-Assertion (`device does not support residency sets`) zu vermeiden.
+  - `iosApp/llama.cpp/ggml/src/ggml-metal/ggml-metal-device.m`
+  - `whisper.cpp/ggml/src/ggml-metal/ggml-metal-device.m`
+- Zusätzliche Härtung: Residency Sets werden im Simulator nun schon bei der Device-Initialisierung deaktiviert (`use_residency_sets = false`), damit auch die Residency-Collection gar nicht erst erstellt wird.
+- Verifiziert mit Builds:
+  - `:composeApp:compileDebugKotlinAndroid` ✅
+  - `:composeApp:compileKotlinIosSimulatorArm64` ✅
+
 ## Stand: 2026-03-20
 
 ## Android: Direct-Llama Prefill-Timeout gefixt
@@ -266,5 +331,3 @@
 ## Stand: 2026-03-23
 
 - `Doku.md` hinzugefuegt: umfassende Projektdokumentation (Technologien, Architektur, Feature-Flows, Plattform-Hinweise). (Android + iOS)
-
-
