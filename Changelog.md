@@ -2,6 +2,21 @@
 
 ## Stand: 2026-03-20
 
+## Android: Direct-Llama Prefill-Timeout gefixt
+- `ai_chat.cpp` (`DirectLlamaBridge.nativeInfer`) nutzt fuer Prefill jetzt kleine Decode-Chunks statt eines grossen Blocks, damit Timeout/Cancel waehrend Prefill regelmaessig greifen.
+- Timeout-Pruefung erfolgt nun vor und nach jedem Prefill-Decode-Chunk; dadurch endet ein haengender Prefill kontrolliert mit `__DIRECT_LLM_ERROR__: timeout`.
+- Direct-Load (`nativeLoadModel`) setzt `n_batch/n_ubatch` fuer Mobile konservativer (max. 128 statt 512), um Compute-/Reserve-Last fuer On-Device-Mapping zu senken.
+
+## Android: Direct-Prefill weiter auf Single-Token-Schritte getunt
+- `DIRECT_PREFILL_CHUNK` auf `1` gesenkt, damit ein einzelner Prefill-Decode auf langsamen Geraeten nicht mehr mehrere Sekunden am Stueck blockiert.
+- `DIRECT_MOBILE_BATCH_MAX` auf `32` reduziert und `llama_batch_init(...)` im Direct-Path auf die mobile Batch-Groesse ausgerichtet (statt fester 512), um Graph-/Compute-Overhead weiter zu druecken.
+
+## Android: Direct-JNI Decode-Pfad beschleunigt
+- `ai_chat.cpp` (Direct-Llama-Pfad) wurde im Hotpath optimiert: keine `llama_batch_init/free`-Allokation mehr pro Prefill-Chunk oder pro generiertem Token.
+- Prefill und Generation nutzen jetzt den wiederverwendbaren globalen Batch (`g_batch`), wodurch JNI-/Allocator-Overhead in der Inferenz deutlich reduziert wird.
+- Runtime-Threadzahl wird beim Direct-Load wieder aus `threads.min/max` + CPU-Anzahl abgeleitet (statt fest auf `2`), inklusive konsistenter `n_batch/n_ubatch`-Konfiguration.
+- Sehr chatty Schritt-fuer-Schritt-Logs im Inferenzloop reduziert, um Logcat-I/O als Laufzeitbremse zu vermeiden.
+
 ## Android: Typbereinigung im On-Device-LMMapping
 - `OnDeviceLlmFormMappingRepository.android.kt` nutzt in den drei relevanten Listen/Signaturen jetzt den korrekten Domain-Typ `FormQuestion` statt `Any`.
 - Entfernt wurden die unsicheren Casts (`UNCHECKED_CAST`) in `buildQuestionGroups`, `buildCompactPrompt` und `buildFocusedTranscript` sowie die provisorische `typealias dynamicQuestion = Any`.
@@ -247,5 +262,9 @@
 - Bei aktiviertem Toggle erhaelt das lokale LLM eine zusaetzliche Prompt-Regel, offensichtliche Whisper-/ASR-Schreibfehler kontextbasiert zu korrigieren (inkl. lautnaher Namen/Fachbegriffe), bevor Felder befuellt werden.
 - Bei deaktiviertem Toggle arbeitet On-Device moeglichst woertlich ohne aktive Rechtschreibnormalisierung.
 - Toggle-Aenderungen werden im Prozess-Log sichtbar gemacht und im On-Device-Modus direkt auf das letzte Transkript neu angewendet.
+
+## Stand: 2026-03-23
+
+- `Doku.md` hinzugefuegt: umfassende Projektdokumentation (Technologien, Architektur, Feature-Flows, Plattform-Hinweise). (Android + iOS)
 
 

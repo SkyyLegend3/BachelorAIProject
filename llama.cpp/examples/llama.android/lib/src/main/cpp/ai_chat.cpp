@@ -33,6 +33,8 @@ constexpr int   N_THREADS_HEADROOM      = 2;
 constexpr int   DEFAULT_CONTEXT_SIZE    = 8192;
 constexpr int   OVERFLOW_HEADROOM       = 4;
 constexpr int   BATCH_SIZE              = 512;
+constexpr int   DIRECT_MOBILE_BATCH_MAX = 32;
+constexpr int   DIRECT_PREFILL_CHUNK    = 1;
 constexpr float DEFAULT_SAMPLER_TEMP    = 0.3f;
 
 static int   g_runtime_n_ctx        = DEFAULT_CONTEXT_SIZE;
@@ -46,6 +48,7 @@ static llama_batch                        g_batch;
 static common_chat_templates_ptr          g_chat_templates;
 static common_sampler                   * g_sampler;
 static std::atomic_bool                   g_direct_cancel_requested{false};
+static bool                               g_batch_initialized = false;
 
 extern "C"
 JNIEXPORT void JNICALL
@@ -626,6 +629,10 @@ Java_com_arm_aichat_direct_DirectLlamaBridge_nativeLoadModel(
         common_sampler_free(g_sampler);
         g_sampler = nullptr;
     }
+    if (g_batch_initialized) {
+        llama_batch_free(g_batch);
+        g_batch_initialized = false;
+    }
     if (g_context != nullptr) {
         llama_free(g_context);
         g_context = nullptr;
@@ -646,17 +653,25 @@ Java_com_arm_aichat_direct_DirectLlamaBridge_nativeLoadModel(
         return 1;
     }
 
-    const int n_threads = 2; // testweise fest
+    const int n_threads = std::max(
+            g_runtime_threads_min,
+            std::min(
+                    g_runtime_threads_max,
+                    (int) sysconf(_SC_NPROCESSORS_ONLN) - N_THREADS_HEADROOM
+            )
+    );
 
     llama_context_params ctx_params = llama_context_default_params();
     ctx_params.n_ctx = g_runtime_n_ctx;
-    ctx_params.n_batch = 64;
-    ctx_params.n_ubatch = 64;
+    const int mobile_batch = std::max(16, std::min(DIRECT_MOBILE_BATCH_MAX, g_runtime_n_ctx));
+    ctx_params.n_batch = mobile_batch;
+    ctx_params.n_ubatch = mobile_batch;
     ctx_params.n_threads = n_threads;
     ctx_params.n_threads_batch = n_threads;
 
-    LOGi("DIRECT load: using %d threads, n_batch=%u n_ubatch=%u flash_attn=%d",
+    LOGi("DIRECT load: threads=%d, n_ctx=%d, n_batch=%u n_ubatch=%u",
             n_threads,
+            g_runtime_n_ctx,
             ctx_params.n_batch,
             ctx_params.n_ubatch);
 
@@ -677,6 +692,9 @@ Java_com_arm_aichat_direct_DirectLlamaBridge_nativeLoadModel(
         g_model = nullptr;
         return 3;
     }
+
+    g_batch = llama_batch_init(mobile_batch, 0, 1);
+    g_batch_initialized = true;
 
     g_direct_cancel_requested.store(false);
     return 0;
@@ -720,14 +738,8 @@ Java_com_arm_aichat_direct_DirectLlamaBridge_nativeInfer(
         env->ReleaseStringUTFChars(userPrompt, usr_chars);
     }
 
-    LOGi("DIRECT infer: start");
-    LOGi(
-            "DIRECT infer: sys_len=%d usr_len=%d n_predict=%d timeout_ms=%lld",
-            (int) sys.size(),
-            (int) usr.size(),
-            (int) n_predict,
-            (long long) timeout_ms
-    );
+    LOGi("DIRECT infer: start (sys=%d, usr=%d, predict=%d, timeout_ms=%lld)",
+         (int) sys.size(), (int) usr.size(), (int) n_predict, (long long) timeout_ms);
 
     std::string prompt;
     if (!sys.empty() && !usr.empty()) {
@@ -738,7 +750,7 @@ Java_com_arm_aichat_direct_DirectLlamaBridge_nativeInfer(
         prompt = usr;
     }
 
-    LOGi("DIRECT infer: merged_prompt_len=%d", (int) prompt.size());
+    LOGi("DIRECT infer: prompt_len=%d", (int) prompt.size());
 
     const auto started = std::chrono::steady_clock::now();
 
@@ -765,10 +777,8 @@ Java_com_arm_aichat_direct_DirectLlamaBridge_nativeInfer(
         return env->NewStringUTF("__DIRECT_LLM_ERROR__: timeout");
     }
 
-    LOGi("DIRECT infer: clearing memory");
     llama_memory_clear(llama_get_memory(g_context), false);
 
-    LOGi("DIRECT infer: resetting sampler");
     common_sampler_reset(g_sampler);
 
     if (g_direct_cancel_requested.load()) {
@@ -780,13 +790,8 @@ Java_com_arm_aichat_direct_DirectLlamaBridge_nativeInfer(
         return env->NewStringUTF("__DIRECT_LLM_ERROR__: timeout");
     }
 
-    LOGi("DIRECT infer: tokenize start");
     std::vector<llama_token> tokens_list = common_tokenize(g_context, prompt, true, true);
-    LOGi(
-            "DIRECT infer: tokenize done token_count=%d elapsed_ms=%lld",
-            (int) tokens_list.size(),
-            elapsed_ms_now()
-    );
+    LOGi("DIRECT infer: token_count=%d elapsed_ms=%lld", (int) tokens_list.size(), elapsed_ms_now());
 
     if (tokens_list.empty()) {
         LOGe("DIRECT infer: tokenization failed");
@@ -802,66 +807,42 @@ Java_com_arm_aichat_direct_DirectLlamaBridge_nativeInfer(
         return env->NewStringUTF("__DIRECT_LLM_ERROR__: prompt too large");
     }
 
-    LOGi("DIRECT infer: prefill start");
-    const int prefill_batch_size = 64; // muss zu ctx_params.n_batch passen
+    if (!g_batch_initialized) {
+        LOGe("DIRECT infer: batch not initialized");
+        return env->NewStringUTF("__DIRECT_LLM_ERROR__: batch not initialized");
+    }
 
-    for (int i = 0; i < (int) tokens_list.size(); i += prefill_batch_size) {
+    // Prefill in kleinen Chunks, damit Timeout/Cancel regelmaessig greifen koennen.
+    const int prefill_chunk = std::max(1, std::min(DIRECT_PREFILL_CHUNK, (int) tokens_list.size()));
+    for (int i = 0; i < (int) tokens_list.size(); i += prefill_chunk) {
         if (g_direct_cancel_requested.load()) {
-            LOGw("DIRECT infer: cancelled during prefill at batch_start=%d", i);
+            LOGw("DIRECT infer: cancelled during prefill at token=%d", i);
             return env->NewStringUTF("__DIRECT_LLM_ERROR__: cancelled");
         }
         if (is_timed_out()) {
-            LOGw(
-                    "DIRECT infer: timeout during prefill at batch_start=%d elapsed_ms=%lld",
-                    i,
-                    elapsed_ms_now()
-            );
+            LOGw("DIRECT infer: timeout during prefill before decode token=%d elapsed_ms=%lld", i, elapsed_ms_now());
             return env->NewStringUTF("__DIRECT_LLM_ERROR__: timeout");
         }
 
-        const int cur = std::min(prefill_batch_size, (int) tokens_list.size() - i);
-        LOGi(
-                "DIRECT infer: prefill batch_start=%d batch_size=%d elapsed_ms=%lld",
-                i,
-                cur,
-                elapsed_ms_now()
-        );
-
-        llama_batch batch = llama_batch_init(cur, 0, 1);
-
+        const int cur = std::min(prefill_chunk, (int) tokens_list.size() - i);
+        common_batch_clear(g_batch);
         for (int j = 0; j < cur; ++j) {
-            const bool logits = (i + j == (int) tokens_list.size() - 1);
-            common_batch_add(batch, tokens_list[i + j], i + j, {0}, logits);
+            const bool want_logits = (i + j == (int) tokens_list.size() - 1);
+            common_batch_add(g_batch, tokens_list[i + j], i + j, {0}, want_logits);
         }
 
-        LOGi(
-                "DIRECT infer: prefill decode begin batch_start=%d batch_size=%d elapsed_ms=%lld",
-                i,
-                cur,
-                elapsed_ms_now()
-        );
-
-        const int decode_result = llama_decode(g_context, batch);
-
-        LOGi(
-                "DIRECT infer: prefill decode end batch_start=%d batch_size=%d decode_result=%d elapsed_ms=%lld",
-                i,
-                cur,
-                decode_result,
-                elapsed_ms_now()
-        );
-
-        llama_batch_free(batch);
-
+        const int decode_result = llama_decode(g_context, g_batch);
         if (decode_result != 0) {
-            LOGe(
-                    "DIRECT infer: prefill decode failed batch_start=%d decode_result=%d",
-                    i,
-                    decode_result
-            );
+            LOGe("DIRECT infer: prefill decode failed token=%d decode_result=%d", i, decode_result);
             return env->NewStringUTF("__DIRECT_LLM_ERROR__: prefill decode failed");
         }
+
+        if (is_timed_out()) {
+            LOGw("DIRECT infer: timeout during prefill after decode token=%d elapsed_ms=%lld", i + cur, elapsed_ms_now());
+            return env->NewStringUTF("__DIRECT_LLM_ERROR__: timeout");
+        }
     }
+    current_position = (llama_pos) tokens_list.size();
     LOGi("DIRECT infer: prefill done elapsed_ms=%lld", elapsed_ms_now());
 
     std::string output;
@@ -882,15 +863,6 @@ Java_com_arm_aichat_direct_DirectLlamaBridge_nativeInfer(
             return env->NewStringUTF("__DIRECT_LLM_ERROR__: timeout");
         }
 
-        if (i % 8 == 0) {
-            LOGi(
-                    "DIRECT infer: generation step=%d elapsed_ms=%lld output_len=%d",
-                    i,
-                    elapsed_ms_now(),
-                    (int) output.size()
-            );
-        }
-
         const llama_token new_token_id = common_sampler_sample(g_sampler, g_context, -1);
         common_sampler_accept(g_sampler, new_token_id, true);
 
@@ -906,19 +878,14 @@ Java_com_arm_aichat_direct_DirectLlamaBridge_nativeInfer(
         auto piece = common_token_to_piece(g_context, new_token_id);
         output += piece;
 
-        llama_batch batch = llama_batch_init(1, 0, 1);
-        common_batch_add(batch, new_token_id, (int) tokens_list.size() + i, {0}, true);
-
-        const int decode_result = llama_decode(g_context, batch);
-        llama_batch_free(batch);
+        common_batch_clear(g_batch);
+        common_batch_add(g_batch, new_token_id, current_position, {0}, true);
+        const int decode_result = llama_decode(g_context, g_batch);
+        current_position++;
 
         if (decode_result != 0) {
-            LOGe(
-                    "DIRECT infer: token decode failed step=%d decode_result=%d elapsed_ms=%lld",
-                    i,
-                    decode_result,
-                    elapsed_ms_now()
-            );
+            LOGe("DIRECT infer: token decode failed step=%d decode_result=%d elapsed_ms=%lld",
+                 i, decode_result, elapsed_ms_now());
             return env->NewStringUTF("__DIRECT_LLM_ERROR__: token decode failed");
         }
     }
@@ -941,6 +908,10 @@ Java_com_arm_aichat_direct_DirectLlamaBridge_nativeUnload(
 ) {
     g_direct_cancel_requested.store(false);
 
+    if (g_batch_initialized) {
+        llama_batch_free(g_batch);
+        g_batch_initialized = false;
+    }
     if (g_sampler != nullptr) {
         common_sampler_free(g_sampler);
         g_sampler = nullptr;
