@@ -2,6 +2,7 @@ package com.example.bachelor_ai_project.features.form.data
 
 import com.arm.aichat.AiChat
 import com.arm.aichat.InferenceEngine
+import com.arm.aichat.InferenceEngine.State
 import com.arm.aichat.isModelLoaded
 import com.example.bachelor_ai_project.core.result.AppResult
 import com.example.bachelor_ai_project.core.result.runCatchingResult
@@ -110,6 +111,8 @@ class LlamaCppOnDeviceLlmEngine(
 
                 val engine = engine()
 
+                prepareEngineForLoad(engine)
+
                 println("DEBUG model effective path=$effectiveModelPath")
                 println("DEBUG model size=${File(effectiveModelPath).length()}")
                 println("DEBUG state before load=${engine.state.value}")
@@ -137,6 +140,38 @@ class LlamaCppOnDeviceLlmEngine(
             } finally {
                 modelLoading = false
             }
+        }
+    }
+
+    private suspend fun prepareEngineForLoad(engine: InferenceEngine) {
+        var state = engine.state.value
+
+        if (state is State.Error) {
+            println("DEBUG LlamaCppOnDeviceLlmEngine: reset engine from Error before load")
+            runCatching { engine.cleanUp() }
+            state = engine.state.value
+        }
+
+        if (state is State.Uninitialized || state is State.Initializing) {
+            val reached = runCatching {
+                withTimeout(10_000L) {
+                    engine.state.first { it is State.Initialized || it is State.ModelReady || it is State.Error }
+                }
+            }.getOrNull()
+            if (reached == null) {
+                throw IllegalStateException("Llama engine initialization timeout")
+            }
+            state = reached
+        }
+
+        if (state is State.Error) {
+            println("DEBUG LlamaCppOnDeviceLlmEngine: retry reset from Error before configure")
+            runCatching { engine.cleanUp() }
+            state = engine.state.value
+        }
+
+        if (state is State.LoadingModel || state is State.UnloadingModel) {
+            throw IllegalStateException("Llama engine busy: ${state.javaClass.simpleName}")
         }
     }
 

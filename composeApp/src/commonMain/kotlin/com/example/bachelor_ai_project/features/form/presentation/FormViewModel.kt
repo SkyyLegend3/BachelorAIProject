@@ -56,11 +56,19 @@ class FormViewModel(
                 )
             },
             supportsOnDeviceMapping = onDeviceMappingRepository != null,
+            isOnDeviceLlmModelConfigured = isOnDeviceLlmModelConfigured(),
             isOnDeviceLlmModelReady = isOnDeviceLlmModelReady(),
             isOnDeviceLlmModelLoading = isOnDeviceLlmModelLoading(),
         ),
     )
     val uiState: StateFlow<FormUiState> = _uiState.asStateFlow()
+
+    init {
+        if (onDeviceMappingRepository != null) {
+            refreshOnDeviceLlmModelReady()
+            warmupOnDeviceModelIfNeeded()
+        }
+    }
 
     /**
      * Mappt die fertige [TranscriptionResponse] auf Formularfelder.
@@ -113,18 +121,44 @@ class FormViewModel(
                             MappingStrategy.UNKNOWN -> "Mapping-Quelle: Unbekannt"
                         }
                     )
-                    if (mode == FormAutomationMode.ON_DEVICE) {
-                        appendLog(
-                            when (mappingResult.mappingStrategy) {
-                                MappingStrategy.ON_DEVICE_LLM -> "On-Device: LLM genutzt"
-                                MappingStrategy.MIXED -> "On-Device: LLM + Fallback/Heuristik genutzt"
-                                MappingStrategy.HEURISTIC_FALLBACK,
-                                MappingStrategy.UNKNOWN,
-                                -> "On-Device: Fallback/Heuristik genutzt"
-                                MappingStrategy.CLOUD_LLM -> "On-Device: Cloud-LLM Rueckfall"
-                            }
-                        )
-                    }
+                        if (mode == FormAutomationMode.ON_DEVICE) {
+                            val llmReasonSuffix = mappingResult.llmFailureReason
+                                ?.takeIf { it.isNotBlank() }
+                                ?.let { ": $it" }
+                                .orEmpty()
+                              val onDeviceStatusMessage = when {
+                                  !mappingResult.llmAttempted && !mappingResult.llmFailureReason.isNullOrBlank() ->
+                                      "On-Device: LLM nicht gestartet$llmReasonSuffix"
+                                  !mappingResult.llmAttempted ->
+                                      "On-Device: LLM nicht gestartet"
+                                  mappingResult.llmReturnedAnswers && mappingResult.mappingStrategy == MappingStrategy.ON_DEVICE_LLM ->
+                                      "On-Device: LLM aufgerufen und genutzt"
+                                  mappingResult.llmReturnedAnswers && mappingResult.mappingStrategy == MappingStrategy.MIXED ->
+                                      "On-Device: LLM aufgerufen, Antwort mit Fallback/Heuristik gemerged"
+                                  mappingResult.llmReturnedAnswers &&
+                                      (mappingResult.mappingStrategy == MappingStrategy.HEURISTIC_FALLBACK ||
+                                          mappingResult.mappingStrategy == MappingStrategy.UNKNOWN) ->
+                                      "On-Device: LLM aufgerufen, Antwort verworfen$llmReasonSuffix"
+                                  mappingResult.llmAttempted && !mappingResult.llmReturnedAnswers ->
+                                      "On-Device: LLM aufgerufen, aber keine nutzbare Antwort$llmReasonSuffix"
+                                  else ->
+                                      "On-Device: Status unklar"
+                              }
+                          appendLog(
+                              if (mappingResult.mappingStrategy == MappingStrategy.CLOUD_LLM) {
+                                  "On-Device: Cloud-LLM Rueckfall"
+                              } else {
+                                  onDeviceStatusMessage
+                              }
+                          )
+                          if (
+                              mappingResult.llmAttempted &&
+                              (mappingResult.mappingStrategy == MappingStrategy.HEURISTIC_FALLBACK ||
+                                  mappingResult.mappingStrategy == MappingStrategy.UNKNOWN)
+                          ) {
+                              appendLog("On-Device: Finale Zuordnung aus Fallback/Heuristik")
+                          }
+                      }
                     val sourceErrorMessage = if (
                         mode == FormAutomationMode.ON_DEVICE &&
                         (mappingResult.mappingStrategy == MappingStrategy.HEURISTIC_FALLBACK || mappingResult.mappingStrategy == MappingStrategy.UNKNOWN) &&
@@ -328,6 +362,7 @@ class FormViewModel(
     private fun refreshOnDeviceLlmModelReady() {
         _uiState.update { current ->
             current.copy(
+                isOnDeviceLlmModelConfigured = isOnDeviceLlmModelConfigured(),
                 isOnDeviceLlmModelReady = isOnDeviceLlmModelReady(),
                 isOnDeviceLlmModelLoading = isOnDeviceLlmModelLoading(),
             )

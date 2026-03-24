@@ -60,7 +60,6 @@ android {
         jniLibs {
             // Einige Transitive koennen dieselben Native-Binaries mitbringen.
             pickFirsts += setOf(
-                "**/libggml*.so",
                 "**/libllama.so",
                 "**/libomp.so",
             )

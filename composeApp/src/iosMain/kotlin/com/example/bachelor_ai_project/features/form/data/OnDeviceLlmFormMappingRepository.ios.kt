@@ -222,12 +222,14 @@ class OnDeviceLlmFormMappingRepository(
             """.trimIndent()
 
             var llmFailureReason: String? = null
+            var llmAttempted = false
             val llmAnswers = when (val engine = llmEngine) {
                 null -> {
                     llmFailureReason = "Keine On-Device-LLM-Engine verfuegbar (Bridge/Modell nicht initialisiert)."
                     emptyMap()
                 }
                 else -> {
+                    llmAttempted = true
                     val rawResult = runCatching {
                         engine.completeJson(systemPrompt = systemPrompt, userPrompt = userPrompt)
                     }
@@ -288,21 +290,20 @@ class OnDeviceLlmFormMappingRepository(
                 -> llmFailureReason
             }
 
-            println(
-                "DEBUG OnDeviceLlmFormMappingRepository: answers llm=${sanitizedLlmAnswers.keys} " +
-                    "heuristic=${heuristicAnswers.keys} fallback=${fallbackAnswers.keys} final=${answers.keys}"
-            )
-            println("DEBUG OnDeviceLlmFormMappingRepository: orthographyCorrectionEnabled=$correctionEnabled")
-            if (answers.isEmpty()) {
-                error("Keine Inhalte fuer die Formularfelder erkannt")
-            }
+              println(
+                  "DEBUG OnDeviceLlmFormMappingRepository: answers llm=${sanitizedLlmAnswers.keys} " +
+                      "heuristic=${heuristicAnswers.keys} fallback=${fallbackAnswers.keys} final=${answers.keys}"
+              )
+              println("DEBUG OnDeviceLlmFormMappingRepository: orthographyCorrectionEnabled=$correctionEnabled")
 
-            TranscriptMappingResult(
-                speakerBlocks = speakerBlocks,
-                fieldAnswers = answers,
-                mappingStrategy = mappingStrategy,
-                llmFailureReason = effectiveLlmFailureReason,
-            )
+                TranscriptMappingResult(
+                    speakerBlocks = speakerBlocks,
+                    fieldAnswers = answers,
+                    mappingStrategy = mappingStrategy,
+                    llmFailureReason = effectiveLlmFailureReason,
+                    llmAttempted = llmAttempted,
+                    llmReturnedAnswers = sanitizedLlmAnswers.isNotEmpty(),
+                )
         }
 
         return when (primaryResult) {
@@ -920,4 +921,3 @@ class OnDeviceLlmFormMappingRepository(
         }
     }
 }
-

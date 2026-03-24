@@ -69,7 +69,7 @@ class DirectLlamaBridge private constructor(
         require(file.exists() && file.isFile && file.canRead()) { "Model invalid: $modelPath" }
 
         val result = nativeLoadModel(modelPath, nCtx, temperature, threadsMin, threadsMax)
-        check(result == 0) { "Native loadModel failed: $result" }
+        check(result == 0) { nativeLoadErrorMessage(result, modelPath) }
     }
 
     fun inferJson(
@@ -97,5 +97,12 @@ class DirectLlamaBridge private constructor(
         nativeShutdown()
         initialized = false
     }
-}
 
+    private fun nativeLoadErrorMessage(result: Int, modelPath: String): String = when (result) {
+        1 -> "LLM model could not be loaded from file: $modelPath"
+        2 -> "LLM context initialization failed. Reduce LLAMA_N_CTX or use a smaller model."
+        3 -> "LLM chat template initialization failed for model: $modelPath"
+        4 -> "LLM sampler initialization failed for model: $modelPath"
+        else -> "Native loadModel failed with code $result for model: $modelPath"
+    }
+}

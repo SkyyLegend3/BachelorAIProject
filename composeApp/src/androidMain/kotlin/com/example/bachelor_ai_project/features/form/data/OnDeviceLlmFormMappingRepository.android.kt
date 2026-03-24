@@ -14,7 +14,6 @@ import com.example.bachelor_ai_project.features.form.domain.SpeakerBlock
 import com.example.bachelor_ai_project.features.form.domain.TranscriptMappingResult
 import com.example.bachelor_ai_project.features.form.domain.TranscriptToFormMapper
 import com.example.bachelor_ai_project.features.transcription.domain.TranscriptionResponse
-import java.io.File
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -34,6 +33,10 @@ class OnDeviceLlmFormMappingRepository(
     private val llmEngine: OnDeviceLlmEngine?,
     private val fallbackRepository: FormMappingRepository,
 ) : FormMappingRepository, OnDeviceFormMappingConfigurable, OnDeviceLlmModelStatusProvider {
+
+    @Volatile
+    private var activeLlmEngine: OnDeviceLlmEngine? = llmEngine
+    private val llmEngineLock = Any()
 
     private data class FieldSpec(
         val id: String,
@@ -96,20 +99,19 @@ class OnDeviceLlmFormMappingRepository(
     }
 
     override fun isOnDeviceLlmModelConfigured(): Boolean {
-        val modelPath = AppConfig.llamaModelPath.trim()
-        if (modelPath.isBlank()) return false
-        val file = File(modelPath)
-        return file.exists() && file.isFile
+        val modelPath = AndroidLlamaModelPathResolver.resolveExistingModelPath(AppConfig.llamaModelPath)
+        return modelPath != null
     }
 
     override fun isOnDeviceLlmModelReady(): Boolean {
         if (!isOnDeviceLlmModelConfigured()) return false
-        val statusEngine = llmEngine as? WarmupCapableOnDeviceLlmEngine ?: return llmEngine != null
+        val engine = resolveLlmEngine() ?: return false
+        val statusEngine = engine as? WarmupCapableOnDeviceLlmEngine ?: return true
         return statusEngine.isModelLoaded()
     }
 
     override fun isOnDeviceLlmModelLoading(): Boolean {
-        val statusEngine = llmEngine as? WarmupCapableOnDeviceLlmEngine ?: return false
+        val statusEngine = resolveLlmEngine() as? WarmupCapableOnDeviceLlmEngine ?: return false
         return statusEngine.isModelLoading()
     }
 
@@ -117,7 +119,7 @@ class OnDeviceLlmFormMappingRepository(
         if (!isOnDeviceLlmModelConfigured()) {
             return AppResult.Error("LLM-Model nicht gefunden oder Pfad ungueltig.")
         }
-        val statusEngine = llmEngine as? WarmupCapableOnDeviceLlmEngine
+        val statusEngine = resolveLlmEngine() as? WarmupCapableOnDeviceLlmEngine
             ?: return AppResult.Error("On-Device-LLM-Engine nicht verfuegbar.")
         return statusEngine.warmupModel()
     }
@@ -127,7 +129,7 @@ class OnDeviceLlmFormMappingRepository(
             return AppResult.Error("LLM-Model nicht gefunden oder Pfad ungueltig.")
         }
 
-        val engine = llmEngine
+        val engine = resolveLlmEngine()
             ?: return AppResult.Error("On-Device-LLM-Engine nicht verfuegbar.")
 
         return runCatchingResult {
@@ -217,27 +219,19 @@ class OnDeviceLlmFormMappingRepository(
             }
 
             var llmFailureReason: String? = null
-            var skipLlmForCurrentAttempt = false
+            var llmAttempted = false
 
-            val llmAnswers = when (val engine = llmEngine) {
+            val llmAnswers = when (val engine = resolveLlmEngine()) {
                 null -> {
                     llmFailureReason = "Keine On-Device-LLM-Engine verfuegbar (Bridge/Modell nicht initialisiert)."
                     emptyMap()
                 }
-                else -> when {
-                    shouldSkipLlm(heuristicAnswers, fallbackAnswers) -> {
-                    println("DEBUG OnDeviceLlmFormMappingRepository: skip LLM, heuristics/fallback already sufficient")
-                    emptyMap()
-                    }
-                    skipLlmForCurrentAttempt -> {
-                    println("DEBUG OnDeviceLlmFormMappingRepository: skip LLM after timeout in current attempt")
-                    emptyMap()
-                    }
-                    else -> {
+                else -> {
                     val groupedAnswers = mutableMapOf<String, String>()
                     val questionGroups = buildQuestionGroups()
 
                     for ((groupIndex, questionGroup) in questionGroups.withIndex()) {
+                        llmAttempted = true
                         val focusedTranscript = buildFocusedTranscript(
                             questions = questionGroup,
                             transcriptText = transcriptForLlmSource,
@@ -293,7 +287,6 @@ class OnDeviceLlmFormMappingRepository(
                     }
 
                     groupedAnswers
-                    }
                 }
             }
 
@@ -321,14 +314,6 @@ class OnDeviceLlmFormMappingRepository(
                     MappingStrategy.UNKNOWN
             }
 
-            val requiredFieldIds = definitionProvider.questions
-                .filter { it.required }
-                .map { it.id }
-                .toSet()
-            val requiredFieldsCovered = requiredFieldIds.all { fieldId ->
-                !answers[fieldId].isNullOrBlank()
-            }
-
             val effectiveLlmFailureReason = when (mappingStrategy) {
                 MappingStrategy.ON_DEVICE_LLM,
                 MappingStrategy.MIXED,
@@ -337,7 +322,7 @@ class OnDeviceLlmFormMappingRepository(
 
                 MappingStrategy.HEURISTIC_FALLBACK,
                 MappingStrategy.UNKNOWN,
-                    -> if (requiredFieldsCovered) null else llmFailureReason
+                    -> llmFailureReason
             }
 
             println(
@@ -351,6 +336,8 @@ class OnDeviceLlmFormMappingRepository(
                 fieldAnswers = answers,
                 mappingStrategy = mappingStrategy,
                 llmFailureReason = effectiveLlmFailureReason,
+                llmAttempted = llmAttempted,
+                llmReturnedAnswers = sanitizedLlmAnswers.isNotEmpty(),
             )
         }
 
@@ -360,7 +347,11 @@ class OnDeviceLlmFormMappingRepository(
                 when (val fallback = fallbackRepository.mapTranscript(response)) {
                     is AppResult.Success -> {
                         if (fallback.data.fieldAnswers.isNotEmpty()) {
-                            fallback
+                            AppResult.Success(
+                                fallback.data.copy(
+                                    llmFailureReason = primaryResult.message,
+                                )
+                            )
                         } else {
                             AppResult.Error(primaryResult.message, primaryResult.cause)
                         }
@@ -396,24 +387,6 @@ class OnDeviceLlmFormMappingRepository(
         result += nonNameQuestions.chunked(1)
 
         return result
-    }
-
-    private fun shouldSkipLlm(
-        heuristicAnswers: Map<String, String>,
-        fallbackAnswers: Map<String, String>,
-    ): Boolean {
-        val relevantFieldIds = definitionProvider.questions
-            .map { it.id }
-            .toSet()
-
-        if (relevantFieldIds.isEmpty()) return false
-
-        val availableAnswers = heuristicAnswers + fallbackAnswers
-        val hasAllRelevantAnswers = relevantFieldIds.all { fieldId ->
-            !availableAnswers[fieldId].isNullOrBlank()
-        }
-
-        return hasAllRelevantAnswers
     }
 
     private fun buildCompactPrompt(
@@ -543,7 +516,7 @@ class OnDeviceLlmFormMappingRepository(
         val trimmed = raw.trim()
         if (trimmed.isBlank()) return emptyList()
 
-        val fenced = Regex("""```(?:json)?\s*({[\s\S]*?})\s*```""")
+        val fenced = Regex("""```(?:json)?\s*(\{[\s\S]*?\})\s*```""")
             .findAll(trimmed)
             .map { it.groupValues[1].trim() }
 
@@ -567,7 +540,10 @@ class OnDeviceLlmFormMappingRepository(
 
         val rootObject = runCatching {
             json.parseToJsonElement(cleaned).jsonObject
-        }.getOrNull() ?: return emptyMap()
+        }.getOrNull()
+        if (rootObject == null) {
+            return parseKeyValueFallback(cleaned)
+        }
 
         val answersObject = rootObject["answers"]?.jsonObject
 
@@ -1123,6 +1099,19 @@ class OnDeviceLlmFormMappingRepository(
 
         return parts.joinToString(" ") { part ->
             part.lowercase().replaceFirstChar { ch -> ch.uppercase() }
+        }
+    }
+
+    private fun resolveLlmEngine(): OnDeviceLlmEngine? {
+        activeLlmEngine?.let { return it }
+        synchronized(llmEngineLock) {
+            activeLlmEngine?.let { return it }
+            val created = createDefaultOnDeviceLlmEngine()
+            if (created != null) {
+                activeLlmEngine = created
+                println("DEBUG OnDeviceLlmFormMappingRepository: lazily created On-Device-LLM engine")
+            }
+            return created
         }
     }
 

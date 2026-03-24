@@ -102,10 +102,11 @@ class DirectLlamaOnDeviceLlmEngine(
     }
 
     private fun resolveModelPathForNativeAccess(): String {
-        val configured = File(modelPath)
-        require(configured.exists()) { "Llama model file not found: $modelPath" }
+        val resolvedPath = AndroidLlamaModelPathResolver.resolveExistingModelPath(modelPath) ?: modelPath
+        val configured = File(resolvedPath)
+        require(configured.exists()) { "Llama model file not found: $resolvedPath" }
         require(configured.isFile) { "Llama model path is not a file: $modelPath" }
-        require(configured.canRead()) { "Llama model is not readable: $modelPath" }
+        require(configured.canRead()) { "Llama model is not readable: $resolvedPath" }
 
         val filesRoot = appContext.filesDir.absolutePath
         if (configured.absolutePath.startsWith(filesRoot)) {
@@ -148,4 +149,3 @@ class DirectLlamaOnDeviceLlmEngine(
         private const val DIRECT_ERROR_PREFIX = "__DIRECT_LLM_ERROR__:"
     }
 }
-

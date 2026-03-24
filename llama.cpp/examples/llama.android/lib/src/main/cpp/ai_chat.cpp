@@ -33,6 +33,7 @@ constexpr int   N_THREADS_HEADROOM      = 2;
 constexpr int   DEFAULT_CONTEXT_SIZE    = 8192;
 constexpr int   OVERFLOW_HEADROOM       = 4;
 constexpr int   BATCH_SIZE              = 512;
+constexpr int   ANDROID_RUNTIME_BATCH_MAX = 16;
 constexpr int   DIRECT_MOBILE_BATCH_MAX = 32;
 constexpr int   DIRECT_PREFILL_CHUNK    = 1;
 constexpr float DEFAULT_SAMPLER_TEMP    = 0.3f;
@@ -41,6 +42,7 @@ static int   g_runtime_n_ctx        = DEFAULT_CONTEXT_SIZE;
 static float g_runtime_sampler_temp = DEFAULT_SAMPLER_TEMP;
 static int   g_runtime_threads_min  = N_THREADS_MIN;
 static int   g_runtime_threads_max  = N_THREADS_MAX;
+static int   g_runtime_batch_capacity = ANDROID_RUNTIME_BATCH_MAX;
 
 static llama_model                      * g_model;
 static llama_context                    * g_context;
@@ -65,7 +67,10 @@ Java_com_arm_aichat_internal_InferenceEngineImpl_init(JNIEnv *env, jobject /*unu
 
     // Initialize backends
     llama_backend_init();
-    LOGi("Backend initiated; Log handler set.");
+    LOGi("Backend initiated; Log handler set. registered_backends=%zu", ggml_backend_reg_count());
+    if (ggml_backend_reg_count() == 0) {
+        LOGe("No ggml backends registered after init. Native libraries may not be extracted.");
+    }
 }
 
 extern "C"
@@ -152,7 +157,8 @@ Java_com_arm_aichat_internal_InferenceEngineImpl_prepare(JNIEnv * /*env*/, jobje
     auto *context = init_context(g_model, g_runtime_n_ctx);
     if (!context) { return 1; }
     g_context = context;
-    g_batch = llama_batch_init(BATCH_SIZE, 0, 1);
+    g_runtime_batch_capacity = std::max(1, std::min(ANDROID_RUNTIME_BATCH_MAX, g_runtime_n_ctx));
+    g_batch = llama_batch_init(g_runtime_batch_capacity, 0, 1);
     g_chat_templates = common_chat_templates_init(g_model, "");
     g_sampler = new_sampler(g_runtime_sampler_temp);
     return 0;
@@ -412,8 +418,9 @@ static int decode_tokens_in_batches(
         const bool compute_last_logit = false) {
     // Process tokens in batches using the global batch
     LOGd("%s: Decode %d tokens starting at position %d", __func__, (int) tokens.size(), start_pos);
-    for (int i = 0; i < (int) tokens.size(); i += BATCH_SIZE) {
-        const int cur_batch_size = std::min((int) tokens.size() - i, BATCH_SIZE);
+    const int batch_capacity = std::max(1, g_runtime_batch_capacity);
+    for (int i = 0; i < (int) tokens.size(); i += batch_capacity) {
+        const int cur_batch_size = std::min((int) tokens.size() - i, batch_capacity);
         common_batch_clear(batch);
         LOGv("%s: Preparing a batch size of %d starting at: %d", __func__, cur_batch_size, i);
 
@@ -455,13 +462,14 @@ Java_com_arm_aichat_internal_InferenceEngineImpl_processSystemPrompt(
     // Obtain system prompt from JEnv
     const auto *system_prompt = env->GetStringUTFChars(jsystem_prompt, nullptr);
     LOGd("%s: System prompt received: \n%s", __func__, system_prompt);
-    std::string formatted_system_prompt(system_prompt);
+    std::string raw_system_prompt(system_prompt ? system_prompt : "");
+    std::string formatted_system_prompt(raw_system_prompt);
     env->ReleaseStringUTFChars(jsystem_prompt, system_prompt);
 
     // Format system prompt if applicable
-    const bool has_chat_template = common_chat_templates_was_explicit(g_chat_templates.get());
+    const bool has_chat_template = g_chat_templates != nullptr;
     if (has_chat_template) {
-        formatted_system_prompt = chat_add_and_format(ROLE_SYSTEM, system_prompt);
+        formatted_system_prompt = chat_add_and_format(ROLE_SYSTEM, raw_system_prompt);
     }
 
     // Tokenize system prompt
@@ -504,13 +512,14 @@ Java_com_arm_aichat_internal_InferenceEngineImpl_processUserPrompt(
     // Obtain and tokenize user prompt
     const auto *const user_prompt = env->GetStringUTFChars(juser_prompt, nullptr);
     LOGd("%s: User prompt received: \n%s", __func__, user_prompt);
-    std::string formatted_user_prompt(user_prompt);
+    std::string raw_user_prompt(user_prompt ? user_prompt : "");
+    std::string formatted_user_prompt(raw_user_prompt);
     env->ReleaseStringUTFChars(juser_prompt, user_prompt);
 
     // Format user prompt if applicable
-    const bool has_chat_template = common_chat_templates_was_explicit(g_chat_templates.get());
+    const bool has_chat_template = g_chat_templates != nullptr;
     if (has_chat_template) {
-        formatted_user_prompt = chat_add_and_format(ROLE_USER, user_prompt);
+        formatted_user_prompt = chat_add_and_format(ROLE_USER, raw_user_prompt);
     }
 
     // Decode formatted user prompts
@@ -520,11 +529,12 @@ Java_com_arm_aichat_internal_InferenceEngineImpl_processUserPrompt(
     }
 
     // Ensure user prompt doesn't exceed the context size by truncating if necessary.
-    const int user_prompt_size = (int) user_tokens.size();
+    int user_prompt_size = (int) user_tokens.size();
     const int max_batch_size = DEFAULT_CONTEXT_SIZE - OVERFLOW_HEADROOM;
     if (user_prompt_size > max_batch_size) {
         const int skipped_tokens = user_prompt_size - max_batch_size;
         user_tokens.resize(max_batch_size);
+        user_prompt_size = (int) user_tokens.size();
         LOGw("%s: User prompt too long! Skipped %d tokens!", __func__, skipped_tokens);
     }
 

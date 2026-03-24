@@ -155,7 +155,7 @@ private extension IOSWhisperBridge {
         params.translate = false
         params.n_threads = Int32(max(1, min(8, ProcessInfo.processInfo.processorCount - 1)))
 
-        let normalizedLanguage = language.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedLanguage = normalizedWhisperLanguage(language)
         var languagePointer: UnsafeMutablePointer<CChar>? = nil
         defer {
             if let languagePointer {
@@ -165,6 +165,8 @@ private extension IOSWhisperBridge {
         if !normalizedLanguage.isEmpty {
             languagePointer = strdup(normalizedLanguage)
             params.language = UnsafePointer(languagePointer)
+        } else {
+            params.language = nil
         }
 
         let status = samples.withUnsafeBufferPointer { buffer in
@@ -236,12 +238,22 @@ private extension IOSWhisperBridge {
     private func decodeWithAVAudioFile(url: URL) throws -> [Float] {
         let source = try AVAudioFile(forReading: url)
 
-        let targetFormat = AVAudioFormat(
+        guard source.processingFormat.sampleRate > 0, source.processingFormat.channelCount > 0 else {
+            lastError = "Audio-Format ungueltig (sampleRate=\(source.processingFormat.sampleRate), channels=\(source.processingFormat.channelCount))"
+            print("DEBUG IOSWhisperBridge: \(lastError)")
+            return []
+        }
+
+        guard let targetFormat = AVAudioFormat(
             commonFormat: .pcmFormatFloat32,
             sampleRate: 16_000,
             channels: 1,
             interleaved: false
-        )!
+        ) else {
+            lastError = "Ziel-Audioformat konnte nicht erstellt werden"
+            print("DEBUG IOSWhisperBridge: \(lastError)")
+            return []
+        }
 
         let converter = AVAudioConverter(from: source.processingFormat, to: targetFormat)
         guard let converter else {
@@ -250,27 +262,36 @@ private extension IOSWhisperBridge {
         }
 
         let frameCapacity: AVAudioFrameCount = 4096
-        let inputBuffer = AVAudioPCMBuffer(
+        guard let inputBuffer = AVAudioPCMBuffer(
             pcmFormat: source.processingFormat,
             frameCapacity: frameCapacity
-        )!
+        ) else {
+            lastError = "Input-Audiopuffer konnte nicht erstellt werden"
+            print("DEBUG IOSWhisperBridge: \(lastError)")
+            return []
+        }
 
+        let ratio = targetFormat.sampleRate / source.processingFormat.sampleRate
         var output: [Float] = []
+        var reachedEndOfInput = false
+
         while true {
-            do {
-                try source.read(into: inputBuffer)
-            } catch {
-                let nsError = error as NSError
-                lastError = "Audio-Lesen fehlgeschlagen (domain=\(nsError.domain), code=\(nsError.code), description=\(nsError.localizedDescription))"
-                print("DEBUG IOSWhisperBridge: \(lastError)")
-                return []
-            }
-            if inputBuffer.frameLength == 0 {
-                break
+            if !reachedEndOfInput {
+                do {
+                    try source.read(into: inputBuffer)
+                } catch {
+                    let nsError = error as NSError
+                    lastError = "Audio-Lesen fehlgeschlagen (domain=\(nsError.domain), code=\(nsError.code), description=\(nsError.localizedDescription))"
+                    print("DEBUG IOSWhisperBridge: \(lastError)")
+                    return []
+                }
+                reachedEndOfInput = inputBuffer.frameLength == 0
             }
 
-            let ratio = targetFormat.sampleRate / source.processingFormat.sampleRate
-            let outputCapacity = max(1, Int(Double(inputBuffer.frameLength) * ratio) + 8)
+            let inputFrameLength = Int(inputBuffer.frameLength)
+            let outputCapacity = reachedEndOfInput
+                ? Int(frameCapacity)
+                : max(1, Int(Double(inputFrameLength) * ratio) + 8)
 
             guard let converted = AVAudioPCMBuffer(
                 pcmFormat: targetFormat,
@@ -283,10 +304,16 @@ private extension IOSWhisperBridge {
             var conversionError: NSError?
             let status = converter.convert(to: converted, error: &conversionError) { _, outStatus in
                 if didFeedInput {
-                    outStatus.pointee = .noDataNow
+                    outStatus.pointee = reachedEndOfInput ? .endOfStream : .noDataNow
                     return nil
                 }
+
                 didFeedInput = true
+                if reachedEndOfInput {
+                    outStatus.pointee = .endOfStream
+                    return nil
+                }
+
                 outStatus.pointee = .haveData
                 return inputBuffer
             }
@@ -305,9 +332,37 @@ private extension IOSWhisperBridge {
             if frameLength > 0, let channelData = converted.floatChannelData?.pointee {
                 output.append(contentsOf: UnsafeBufferPointer(start: channelData, count: frameLength))
             }
+
+            if reachedEndOfInput && status == .endOfStream {
+                break
+            }
         }
 
         return output
+    }
+
+    private func normalizedWhisperLanguage(_ rawLanguage: String) -> String {
+        let normalized = rawLanguage
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+
+        guard !normalized.isEmpty else {
+            return ""
+        }
+
+        if normalized == "auto" {
+            return ""
+        }
+
+        let prefix = String(normalized.prefix(2))
+        let candidate = prefix.count == 2 ? prefix : normalized
+        let languageId = whisper_lang_id(candidate)
+        guard languageId >= 0 else {
+            print("DEBUG IOSWhisperBridge: Ungueltige Sprache '\(rawLanguage)', nutze Auto-Erkennung.")
+            return ""
+        }
+
+        return candidate
     }
 
     private func decodeWithAVAssetReader(url: URL) -> [Float] {
@@ -428,5 +483,3 @@ func registerIosWhisperBridgeIfAvailable() {
         print("DEBUG IOSWhisperBridge: Bridge registriert, aber noch kein Modell gefunden (Config/Bundle/Documents).")
     }
 }
-
-

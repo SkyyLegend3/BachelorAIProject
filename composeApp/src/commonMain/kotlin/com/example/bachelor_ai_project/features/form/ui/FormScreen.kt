@@ -90,11 +90,13 @@ fun FormScreen(
                 val indicatorColor = when {
                     state.isOnDeviceLlmModelLoading -> Color(0xFFF9A825)
                     state.isOnDeviceLlmModelReady -> Color(0xFF2E7D32)
+                    state.isOnDeviceLlmModelConfigured -> Color(0xFFEF6C00)
                     else -> Color(0xFFC62828)
                 }
                 val indicatorText = when {
                     state.isOnDeviceLlmModelLoading -> "Model wird geladen"
                     state.isOnDeviceLlmModelReady -> "LLM-Model bereit"
+                    state.isOnDeviceLlmModelConfigured -> "LLM-Model gefunden (noch nicht geladen)"
                     else -> "LLM-Model nicht gefunden"
                 }
 

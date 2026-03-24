@@ -9,8 +9,15 @@ import com.example.bachelor_ai_project.core.config.AppConfig
  * Liefert eine llama.cpp-Engine, sobald ein Modellpfad konfiguriert ist.
  */
 fun createDefaultOnDeviceLlmEngine(): OnDeviceLlmEngine? {
-        val modelPath = AppConfig.llamaModelPath.trim()
-        if (modelPath.isBlank()) return null
+        val configuredModelPath = AppConfig.llamaModelPath.trim()
+        val resolvedModelPath = AndroidLlamaModelPathResolver.resolveExistingModelPath(configuredModelPath)
+        val modelPath = resolvedModelPath ?: configuredModelPath.takeIf { it.isNotBlank() } ?: run {
+                println(
+                        "DEBUG OnDeviceLlmEngineProvider: no LLM model path configured and no readable fallback model found. " +
+                                "configuredPath=$configuredModelPath"
+                )
+                return null
+        }
 
         val configuredPredictLength = BuildConfig.LLAMA_PREDICT_LENGTH.coerceAtLeast(1)
         val predictLength = if (BuildConfig.LLAMA_PERFORMANCE_MODE) {
@@ -26,22 +33,14 @@ fun createDefaultOnDeviceLlmEngine(): OnDeviceLlmEngine? {
         println(
                 "DEBUG OnDeviceLlmEngineProvider: performanceMode=${BuildConfig.LLAMA_PERFORMANCE_MODE}, " +
                         "predictLength=$predictLength (configured=$configuredPredictLength), timeoutMs=$inferenceTimeoutMs, " +
-                        "nCtx=$nCtx, temperature=$temperature, threads=$threadsMin-$threadsMax"
+                        "nCtx=$nCtx, temperature=$temperature, threads=$threadsMin-$threadsMax, " +
+                        "modelPath=$modelPath, resolvedModelPath=${resolvedModelPath ?: "<deferred>"}"
         )
         if (!isAiChatStubActive()) {
-                println("DEBUG EngineProvider: using LlamaCppOnDeviceLlmEngine")
-                return LlamaCppOnDeviceLlmEngine(
-                        modelPath = modelPath,
-                        predictLength = predictLength,
-                        inferenceTimeoutMs = inferenceTimeoutMs,
-                        nCtx = nCtx,
-                        temperature = temperature,
-                        threadsMin = threadsMin,
-                        threadsMax = threadsMax,
-                )
+                println("DEBUG OnDeviceLlmEngineProvider: using DirectLlamaOnDeviceLlmEngine")
+        } else {
+                println("DEBUG OnDeviceLlmEngineProvider: AiChat stub active, using DirectLlamaOnDeviceLlmEngine")
         }
-
-        println("DEBUG OnDeviceLlmEngineProvider: AiChat stub active, fallback to DirectLlamaOnDeviceLlmEngine")
         return DirectLlamaOnDeviceLlmEngine(
                 modelPath = modelPath,
                 predictLength = predictLength,

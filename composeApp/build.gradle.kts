@@ -141,11 +141,11 @@ android {
     }
     packaging {
         jniLibs {
+            useLegacyPackaging = true
             // llamaAndroidLib und whisperAndroidLib liefern beide libomp.so aus.
             // Wir nehmen die erste gefundene Variante, um den Merge-Konflikt zu vermeiden.
             pickFirsts += setOf(
                 "**/libomp.so",
-                "**/libggml*.so",
             )
         }
         resources {

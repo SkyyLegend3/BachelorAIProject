@@ -1,44 +1,9 @@
-*.iml
-.kotlin
-.gradle
-**/build/
-xcuserdata
-!src/**/build/
+.gradle/
+.idea/
+.kotlin/
+build/
+*/build/
+captures/
 local.properties
-iosApp/Configuration/Secrets.xcconfig
-.idea
+*.iml
 .DS_Store
-captures
-.externalNativeBuild
-.cxx
-*.xcodeproj/*
-!*.xcodeproj/project.pbxproj
-!*.xcodeproj/xcshareddata/
-!*.xcodeproj/project.xcworkspace/
-!*.xcworkspace/contents.xcworkspacedata
-**/xcshareddata/WorkspaceSettings.xcsettings
-node_modules/
-
-# Local iOS llama framework build output (generated/vendor content)
-ios-llama-build/
-
-# AI model artifacts (large files)
-*.gguf
-*.ggml
-*.safetensors
-*.ckpt
-*.onnx
-*.pt
-*.pth
-*.tflite
-
-# Typical model locations
-**/models/**
-**/Resources/models/**
-**/files/models/**
-iosApp/whisper-base.bin
-
-# Keep placeholders/docs in model folders
-!**/models/.gitkeep
-!**/models/.gitignore
-!**/models/README.md

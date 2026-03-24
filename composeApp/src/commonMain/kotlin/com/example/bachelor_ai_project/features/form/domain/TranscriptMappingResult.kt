@@ -40,5 +40,6 @@ data class TranscriptMappingResult(
     val fieldAnswers: Map<String, String>,
     val mappingStrategy: MappingStrategy = MappingStrategy.UNKNOWN,
     val llmFailureReason: String? = null,
+    val llmAttempted: Boolean = false,
+    val llmReturnedAnswers: Boolean = false,
 )
-

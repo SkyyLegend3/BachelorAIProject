@@ -331,3 +331,18 @@
 ## Stand: 2026-03-23
 
 - `Doku.md` hinzugefuegt: umfassende Projektdokumentation (Technologien, Architektur, Feature-Flows, Plattform-Hinweise). (Android + iOS)
+
+## Stand: 2026-03-24
+
+- Android: `whisperAndroidLib` (`whisper.cpp/examples/whisper.android/lib/build.gradle`) auf echten Source-Build mit statischem ggml-Linking festgezogen (`-DBUILD_SHARED_LIBS=OFF`, `-DGGML_BACKEND_DL=OFF`), damit keine Restore-/Prebuilt-JNI-Artefakte fuer ggml mehr noetig sind.
+- Android: ggml-Kollisions-Workaround per `pickFirst` entfernt: `composeApp/build.gradle.kts` und `llama.cpp/examples/llama.android/lib/build.gradle.kts` nutzen kein `**/libggml*.so`-`pickFirst` mehr.
+- Android: Packaging bleibt fuer `libomp.so` weiterhin defensiv auf `pickFirst`, da hier weiterhin ein legitimer transitive Native-Konflikt zwischen den Android-Libs auftreten kann.
+- Android: neues Auswertungsskript `scripts/parse_llm_timings.py` hinzugefuegt, um On-Device-LLM-Laufzeiten aus `DirectLlamaOnDeviceLlmEngine`-Logcat-Zeilen (inkl. p50/p95/avg) reproduzierbar zu messen.
+- Android: `scripts/README.md` ergaenzt mit einem kompakten Messablauf (`adb logcat` aufnehmen + Parser ausfuehren) fuer den erneuten LLM-Pfad-Check.
+- Android: Modellpfad-Aufloesung fuer On-Device-LLM robuster gemacht (`composeApp/src/androidMain/kotlin/com/example/bachelor_ai_project/features/form/data/AndroidLlamaModelPathResolver.kt`), damit bei Dateinamen-/Pfadabweichungen nach Push/Reinstall vorhandene `.gguf`-Modelle in `files/models` trotzdem gefunden werden.
+- Android: `OnDeviceLlmEngineProvider.android.kt` und `OnDeviceLlmFormMappingRepository.android.kt` auf den gemeinsamen Resolver umgestellt; dadurch nutzt Engine-Initialisierung und UI-Status dieselbe reale Modellpfad-Pruefung statt eines starren Einzelpfads.
+- Android: Persistenter roter LLM-Status nach Modellinstallation behoben: `OnDeviceLlmFormMappingRepository.android.kt` kann eine initial fehlende Engine jetzt lazy nacherzeugen und blockiert Warmup/Selftest nicht mehr auf einem fruehen `null`-Snapshot.
+- Android: On-Device-Statusanzeige praezisiert (`FormUiState.kt`, `FormViewModel.kt`, `FormScreen.kt`) mit separatem Zustand `isOnDeviceLlmModelConfigured`; UI zeigt bei gefundenem, aber noch nicht geladenem Modell jetzt einen Zwischenstatus statt faelschlich "LLM-Model nicht gefunden".
+- Android: Proaktiver Warmup im `FormViewModel`-Init aktiviert, damit Modellladen frueher startet und der Status schneller auf "bereit" wechselt.
+- Android: Llama-Warmup gegen fehlerhafte Engine-Zustaende gehaertet (`LlamaCppOnDeviceLlmEngine.android.kt`): vor `configureRuntime` wird ein vorhandener `Error`-State per `cleanUp()` zurueckgesetzt und auf `Initialized` gewartet, damit der Fehler "Cannot configure runtime in Error!" nicht mehr den Modell-Load blockiert.
+

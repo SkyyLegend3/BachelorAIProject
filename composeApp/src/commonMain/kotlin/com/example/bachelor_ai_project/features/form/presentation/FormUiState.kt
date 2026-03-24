@@ -24,6 +24,7 @@ data class FormUiState(
     val mappingLogs: List<String> = emptyList(),
     val automationMode: FormAutomationMode = FormAutomationMode.CLOUD,
     val supportsOnDeviceMapping: Boolean = false,
+    val isOnDeviceLlmModelConfigured: Boolean = false,
     val isOnDeviceLlmModelReady: Boolean = false,
     val isOnDeviceLlmModelLoading: Boolean = false,
     val isLlmTestRunning: Boolean = false,
