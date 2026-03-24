@@ -49,6 +49,7 @@ static common_chat_templates_ptr          g_chat_templates;
 static common_sampler                   * g_sampler;
 static std::atomic_bool                   g_direct_cancel_requested{false};
 static bool                               g_batch_initialized = false;
+static int                                g_direct_batch_capacity = 0;
 
 extern "C"
 JNIEXPORT void JNICALL
@@ -348,6 +349,61 @@ static void reset_short_term_states() {
     assistant_ss.str("");
 }
 
+static bool try_extract_complete_json_object(
+        const std::string &text,
+        std::string &json_out
+) {
+    int start = -1;
+    int depth = 0;
+    bool in_string = false;
+    bool escaped = false;
+
+    for (int i = 0; i < (int) text.size(); ++i) {
+        const char ch = text[i];
+
+        if (escaped) {
+            escaped = false;
+            continue;
+        }
+
+        if (ch == '\\' && in_string) {
+            escaped = true;
+            continue;
+        }
+
+        if (ch == '"') {
+            in_string = !in_string;
+            continue;
+        }
+
+        if (in_string) {
+            continue;
+        }
+
+        if (ch == '{') {
+            if (depth == 0) {
+                start = i;
+            }
+            depth++;
+            continue;
+        }
+
+        if (ch == '}') {
+            if (depth == 0) {
+                continue;
+            }
+
+            depth--;
+            if (depth == 0 && start >= 0) {
+                json_out = text.substr(start, i - start + 1);
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
 static int decode_tokens_in_batches(
         llama_context *context,
         llama_batch &batch,
@@ -633,9 +689,13 @@ Java_com_arm_aichat_direct_DirectLlamaBridge_nativeLoadModel(
         llama_batch_free(g_batch);
         g_batch_initialized = false;
     }
+    g_direct_batch_capacity = 0;
     if (g_context != nullptr) {
         llama_free(g_context);
         g_context = nullptr;
+    }
+    if (g_chat_templates != nullptr) {
+        g_chat_templates.reset();
     }
     if (g_model != nullptr) {
         llama_model_free(g_model);
@@ -682,10 +742,8 @@ Java_com_arm_aichat_direct_DirectLlamaBridge_nativeLoadModel(
         return 2;
     }
 
-    common_params_sampling sparams;
-    sparams.temp = g_runtime_sampler_temp;
-    g_sampler = common_sampler_init(g_model, sparams);
-    if (g_sampler == nullptr) {
+    g_chat_templates = common_chat_templates_init(g_model, "");
+    if (g_chat_templates == nullptr) {
         llama_free(g_context);
         g_context = nullptr;
         llama_model_free(g_model);
@@ -693,8 +751,21 @@ Java_com_arm_aichat_direct_DirectLlamaBridge_nativeLoadModel(
         return 3;
     }
 
+    common_params_sampling sparams;
+    sparams.temp = g_runtime_sampler_temp;
+    g_sampler = common_sampler_init(g_model, sparams);
+    if (g_sampler == nullptr) {
+        g_chat_templates.reset();
+        llama_free(g_context);
+        g_context = nullptr;
+        llama_model_free(g_model);
+        g_model = nullptr;
+        return 4;
+    }
+
     g_batch = llama_batch_init(mobile_batch, 0, 1);
     g_batch_initialized = true;
+    g_direct_batch_capacity = mobile_batch;
 
     g_direct_cancel_requested.store(false);
     return 0;
@@ -741,12 +812,16 @@ Java_com_arm_aichat_direct_DirectLlamaBridge_nativeInfer(
     LOGi("DIRECT infer: start (sys=%d, usr=%d, predict=%d, timeout_ms=%lld)",
          (int) sys.size(), (int) usr.size(), (int) n_predict, (long long) timeout_ms);
 
+    reset_long_term_states();
+
     std::string prompt;
-    if (!sys.empty() && !usr.empty()) {
-        prompt = "Anweisung:\n" + sys + "\n\nAufgabe:\n" + usr;
-    } else if (!sys.empty()) {
-        prompt = sys;
-    } else {
+    if (!sys.empty()) {
+        prompt += chat_add_and_format(ROLE_SYSTEM, sys);
+    }
+    if (!usr.empty()) {
+        prompt += chat_add_and_format(ROLE_USER, usr);
+    }
+    if (prompt.empty()) {
         prompt = usr;
     }
 
@@ -812,8 +887,16 @@ Java_com_arm_aichat_direct_DirectLlamaBridge_nativeInfer(
         return env->NewStringUTF("__DIRECT_LLM_ERROR__: batch not initialized");
     }
 
-    // Prefill in kleinen Chunks, damit Timeout/Cancel regelmaessig greifen koennen.
-    const int prefill_chunk = std::max(1, std::min(DIRECT_PREFILL_CHUNK, (int) tokens_list.size()));
+    // Prefill in mobilen Batches, damit Timeout/Cancel regelmaessig greifen koennen,
+    // ohne fuer jedes einzelne Prompt-Token einen separaten Decode auszufuehren.
+      const int prefill_chunk = std::max(
+              1,
+              std::min(
+                      DIRECT_PREFILL_CHUNK,
+                      std::min((int) tokens_list.size(), g_direct_batch_capacity)
+              )
+      );
+    LOGi("DIRECT infer: prefill_chunk=%d batch_capacity=%d", prefill_chunk, g_direct_batch_capacity);
     for (int i = 0; i < (int) tokens_list.size(); i += prefill_chunk) {
         if (g_direct_cancel_requested.load()) {
             LOGw("DIRECT infer: cancelled during prefill at token=%d", i);
@@ -878,6 +961,18 @@ Java_com_arm_aichat_direct_DirectLlamaBridge_nativeInfer(
         auto piece = common_token_to_piece(g_context, new_token_id);
         output += piece;
 
+        std::string completed_json;
+        if (try_extract_complete_json_object(output, completed_json)) {
+            output = completed_json;
+            LOGi(
+                    "DIRECT infer: completed json at step=%d elapsed_ms=%lld output=%s",
+                    i,
+                    elapsed_ms_now(),
+                    output.c_str()
+            );
+            break;
+        }
+
         common_batch_clear(g_batch);
         common_batch_add(g_batch, new_token_id, current_position, {0}, true);
         const int decode_result = llama_decode(g_context, g_batch);
@@ -912,9 +1007,13 @@ Java_com_arm_aichat_direct_DirectLlamaBridge_nativeUnload(
         llama_batch_free(g_batch);
         g_batch_initialized = false;
     }
+    g_direct_batch_capacity = 0;
     if (g_sampler != nullptr) {
         common_sampler_free(g_sampler);
         g_sampler = nullptr;
+    }
+    if (g_chat_templates != nullptr) {
+        g_chat_templates.reset();
     }
     if (g_context != nullptr) {
         llama_free(g_context);
@@ -934,4 +1033,3 @@ Java_com_arm_aichat_direct_DirectLlamaBridge_nativeShutdown(
 ) {
     Java_com_arm_aichat_internal_InferenceEngineImpl_shutdown(env, nullptr);
 }
-

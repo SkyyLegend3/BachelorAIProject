@@ -91,7 +91,6 @@ class OnDeviceLlmFormMappingRepository(
 
     @Volatile
     private var orthographyCorrectionEnabled: Boolean = true
-
     override fun setOrthographyCorrectionEnabled(enabled: Boolean) {
         orthographyCorrectionEnabled = enabled
     }
@@ -212,14 +211,29 @@ class OnDeviceLlmFormMappingRepository(
                 speakerBlocks = speakerBlocks,
             )
 
+            val fallbackAnswers = when (val fallback = fallbackRepository.mapTranscript(response)) {
+                is AppResult.Success -> fallback.data.fieldAnswers
+                is AppResult.Error -> emptyMap()
+            }
+
             var llmFailureReason: String? = null
+            var skipLlmForCurrentAttempt = false
 
             val llmAnswers = when (val engine = llmEngine) {
                 null -> {
                     llmFailureReason = "Keine On-Device-LLM-Engine verfuegbar (Bridge/Modell nicht initialisiert)."
                     emptyMap()
                 }
-                else -> {
+                else -> when {
+                    shouldSkipLlm(heuristicAnswers, fallbackAnswers) -> {
+                    println("DEBUG OnDeviceLlmFormMappingRepository: skip LLM, heuristics/fallback already sufficient")
+                    emptyMap()
+                    }
+                    skipLlmForCurrentAttempt -> {
+                    println("DEBUG OnDeviceLlmFormMappingRepository: skip LLM after timeout in current attempt")
+                    emptyMap()
+                    }
+                    else -> {
                     val groupedAnswers = mutableMapOf<String, String>()
                     val questionGroups = buildQuestionGroups()
 
@@ -279,12 +293,8 @@ class OnDeviceLlmFormMappingRepository(
                     }
 
                     groupedAnswers
+                    }
                 }
-            }
-
-            val fallbackAnswers = when (val fallback = fallbackRepository.mapTranscript(response)) {
-                is AppResult.Success -> fallback.data.fieldAnswers
-                is AppResult.Error -> emptyMap()
             }
 
             val sanitizedLlmAnswers = sanitizeLlmAnswers(llmAnswers)
@@ -311,6 +321,14 @@ class OnDeviceLlmFormMappingRepository(
                     MappingStrategy.UNKNOWN
             }
 
+            val requiredFieldIds = definitionProvider.questions
+                .filter { it.required }
+                .map { it.id }
+                .toSet()
+            val requiredFieldsCovered = requiredFieldIds.all { fieldId ->
+                !answers[fieldId].isNullOrBlank()
+            }
+
             val effectiveLlmFailureReason = when (mappingStrategy) {
                 MappingStrategy.ON_DEVICE_LLM,
                 MappingStrategy.MIXED,
@@ -319,7 +337,7 @@ class OnDeviceLlmFormMappingRepository(
 
                 MappingStrategy.HEURISTIC_FALLBACK,
                 MappingStrategy.UNKNOWN,
-                    -> llmFailureReason
+                    -> if (requiredFieldsCovered) null else llmFailureReason
             }
 
             println(
@@ -357,13 +375,17 @@ class OnDeviceLlmFormMappingRepository(
         val questions = definitionProvider.questions
         if (questions.isEmpty()) return emptyList()
 
+        if (questions.size <= SMALL_FORM_SINGLE_PASS_THRESHOLD) {
+            return listOf(questions)
+        }
+
         val nameQuestions = questions.filter { q ->
             val idNorm = normalizeKey(q.id)
             val labelNorm = normalizeKey(q.label)
             idNorm.contains("name") || labelNorm.contains("name") || labelNorm.contains("heiss")
         }
 
-        val nonNameQuestions = questions - nameQuestions
+        val nonNameQuestions = questions - nameQuestions.toSet()
 
         val result = mutableListOf<List<FormQuestion>>()
 
@@ -374,6 +396,24 @@ class OnDeviceLlmFormMappingRepository(
         result += nonNameQuestions.chunked(1)
 
         return result
+    }
+
+    private fun shouldSkipLlm(
+        heuristicAnswers: Map<String, String>,
+        fallbackAnswers: Map<String, String>,
+    ): Boolean {
+        val relevantFieldIds = definitionProvider.questions
+            .map { it.id }
+            .toSet()
+
+        if (relevantFieldIds.isEmpty()) return false
+
+        val availableAnswers = heuristicAnswers + fallbackAnswers
+        val hasAllRelevantAnswers = relevantFieldIds.all { fieldId ->
+            !availableAnswers[fieldId].isNullOrBlank()
+        }
+
+        return hasAllRelevantAnswers
     }
 
     private fun buildCompactPrompt(
@@ -396,12 +436,16 @@ class OnDeviceLlmFormMappingRepository(
         }
 
         val systemPrompt = """
-        Antworte nur mit JSON.
-        Schema:
-        {"answers":{$answersJsonTemplate}}
-        Nur Infos aus dem Transkript.
-        Fehlende Werte: "".
-        Kurz und auf Deutsch.
+        Gib genau eine JSON-Zeile zurueck.
+        Kein Markdown. Kein Zusatztext.
+        Nutze nur sichere Infos aus dem Transkript.
+        Antworte mit einem flachen JSON-Objekt.
+        Erlaubte Keys: ${questions.joinToString(", ") { it.id }}.
+        Werte kurz halten, maximal 6 Woerter.
+        Name nur als Personenname.
+        Unbekannte Felder weglassen.
+        Beispiel: {$answersJsonTemplate}
+        $orthographyInstruction
         """.trimIndent()
 
         val userPrompt = """
@@ -410,6 +454,8 @@ class OnDeviceLlmFormMappingRepository(
 
         Text:
         ${transcript.take(MAX_TRANSCRIPT_CHARS_PER_CHUNK)}
+
+        JSON:
         """.trimIndent()
 
         return PromptBundle(
@@ -1081,6 +1127,7 @@ class OnDeviceLlmFormMappingRepository(
     }
 
     private companion object {
-        private const val MAX_TRANSCRIPT_CHARS_PER_CHUNK = 500
+        private const val SMALL_FORM_SINGLE_PASS_THRESHOLD = 4
+        private const val MAX_TRANSCRIPT_CHARS_PER_CHUNK = 240
     }
 }

@@ -2,8 +2,6 @@ package com.example.bachelor_ai_project.core.util
 
 import android.app.Activity
 import android.content.Intent
-import android.net.Uri
-import android.provider.MediaStore
 import com.example.bachelor_ai_project.features.recording.domain.AppContextHolder
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine

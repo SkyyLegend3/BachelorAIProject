@@ -76,6 +76,9 @@ class LlamaCppOnDeviceLlmEngine(
             var firstTokenLogged = false
 
             mutex.withLock {
+                println("DEBUG completeJson: before setSystemPrompt")
+                println("DEBUG completeJson: systemPrompt=[$systemPrompt]")
+                engine.setSystemPrompt(systemPrompt)
                 println("DEBUG completeJson: before sendUserPrompt")
                 println("DEBUG completeJson: userPrompt=[$userPrompt]")
 
@@ -204,4 +207,3 @@ class LlamaCppOnDeviceLlmEngine(
         println("DEBUG LlamaCppOnDeviceLlmEngine: timeout recovery done for $label")
     }
 }
-

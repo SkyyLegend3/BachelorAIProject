@@ -17,19 +17,19 @@ val llamaPerformanceMode: Boolean = localProperties
 val llamaPredictLength: Int = localProperties
     .getProperty(
         "llama.predict.length",
-        if (llamaPerformanceMode) "64" else "256",
+        if (llamaPerformanceMode) "32" else "128",
     )
     .toIntOrNull()
     ?.coerceAtLeast(1)
-    ?: if (llamaPerformanceMode) 64 else 256
+    ?: if (llamaPerformanceMode) 32 else 128
 val llamaInferenceTimeoutMs: Long = localProperties
     .getProperty(
         "llama.inference.timeout.ms",
-        if (llamaPerformanceMode) "45000" else "60000",
+        if (llamaPerformanceMode) "60000" else "90000",
     )
     .toLongOrNull()
     ?.coerceAtLeast(5_000L)
-    ?: if (llamaPerformanceMode) 45_000L else 60_000L
+    ?: if (llamaPerformanceMode) 60_000L else 90_000L
 val llamaContextSize: Int = localProperties
     .getProperty("llama.n.ctx", "512")
     .toIntOrNull()
@@ -86,8 +86,10 @@ kotlin {
             implementation(libs.compose.uiToolingPreview)
             implementation(libs.androidx.activity.compose)
             implementation(libs.ktor.client.okhttp)
-            implementation(project(":llamaAndroidLib"))
             implementation(project(":whisperAndroidLib"))
+            // Reihenfolge bewusst: bei kollidierenden ggml-Shared-Libs soll die
+            // llamaAndroidLib-Variante im finalen APK bevorzugt werden.
+            implementation(project(":llamaAndroidLib"))
         }
         iosMain.dependencies {
             implementation(libs.ktor.client.darwin)
@@ -164,4 +166,3 @@ android {
 dependencies {
     debugImplementation(libs.compose.uiTooling)
 }
-

@@ -18,9 +18,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withContext
 import kotlin.time.TimeSource
 
@@ -41,7 +39,6 @@ class FormViewModel(
 
     companion object {
         private const val MAX_LOG_ENTRIES = 16
-        private const val ON_DEVICE_MAPPING_TIMEOUT_MS = 90_000L
     }
 
     private var lastTranscript: TranscriptionResponse? = null
@@ -96,21 +93,8 @@ class FormViewModel(
             )
             _uiState.update { it.copy(isMappingLoading = true, mappingError = null, mappingSourceError = null) }
 
-            val result = try {
-                withContext(Dispatchers.Default) {
-                    if (mode == FormAutomationMode.ON_DEVICE) {
-                        withTimeout(ON_DEVICE_MAPPING_TIMEOUT_MS) {
-                            MapTranscriptToFormUseCase(activeRepository()).invoke(response)
-                        }
-                    } else {
-                        MapTranscriptToFormUseCase(activeRepository()).invoke(response)
-                    }
-                }
-            } catch (_: TimeoutCancellationException) {
-                appendLog("On-Device-Mapping Timeout nach ${ON_DEVICE_MAPPING_TIMEOUT_MS / 1000}s")
-                AppResult.Error(
-                    "On-Device-Mapping hat zu lange gedauert. Bitte erneut versuchen oder auf Cloud wechseln."
-                )
+            val result = withContext(Dispatchers.Default) {
+                MapTranscriptToFormUseCase(activeRepository()).invoke(response)
             }
 
             val durationMs = startedAt.elapsedNow().inWholeMilliseconds
