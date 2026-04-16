@@ -414,7 +414,7 @@ class OnDeviceLlmFormMappingRepository(
         Nutze nur sichere Infos aus dem Transkript.
         Antworte mit einem flachen JSON-Objekt.
         Erlaubte Keys: ${questions.joinToString(", ") { it.id }}.
-        Werte kurz halten, maximal 6 Woerter.
+        Fuer Nicht-Namensfelder ganze, zusammenhaengende Antwortsaetze aus dem Transkript verwenden (maximal 220 Zeichen pro Feld).
         Name nur als Personenname.
         Unbekannte Felder weglassen.
         Beispiel: {$answersJsonTemplate}
@@ -594,7 +594,7 @@ class OnDeviceLlmFormMappingRepository(
         if (rawAnswers.isEmpty()) return emptyMap()
 
         return rawAnswers.mapNotNull { (rawKey, rawValue) ->
-            val value = rawValue.trim()
+            val value = trimTrailingLlmArtifacts(rawValue)
             if (value.isBlank()) return@mapNotNull null
 
             val keyTrimmed = rawKey.trim()
@@ -606,6 +606,19 @@ class OnDeviceLlmFormMappingRepository(
 
             mappedId to value
         }.toMap()
+    }
+
+    private fun trimTrailingLlmArtifacts(rawValue: String): String {
+        var cleaned = rawValue.trim()
+        if (cleaned.isBlank()) return cleaned
+
+        // Entfernt haeufige JSON-Ausgabe-Artefakte am Feldende wie `",` oder `,"`.
+        cleaned = cleaned
+            .replace(Regex("""[\"']\s*[,;]\s*$"""), "")
+            .replace(Regex("""[,;]\s*[\"']\s*$"""), "")
+            .trim()
+
+        return cleaned
     }
 
     private fun sanitizeLlmAnswers(llmAnswers: Map<String, String>): Map<String, String> {

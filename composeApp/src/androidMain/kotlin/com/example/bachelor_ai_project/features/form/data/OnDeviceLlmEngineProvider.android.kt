@@ -21,7 +21,8 @@ fun createDefaultOnDeviceLlmEngine(): OnDeviceLlmEngine? {
 
         val configuredPredictLength = BuildConfig.LLAMA_PREDICT_LENGTH.coerceAtLeast(1)
         val predictLength = if (BuildConfig.LLAMA_PERFORMANCE_MODE) {
-                configuredPredictLength.coerceAtMost(16)
+                // Bei Formular-Mapping reicht ein zu kleines Token-Budget oft nicht fuer vollstaendige Satzantworten.
+                configuredPredictLength.coerceAtMost(32)
         } else {
                 configuredPredictLength.coerceAtMost(32)
         }
