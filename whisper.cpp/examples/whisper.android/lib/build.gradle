@@ -18,6 +18,10 @@ android {
         }
         externalNativeBuild {
             cmake {
+                // Erzwingt Source-Build aus dem eingebundenen whisper.cpp/ggml-Tree
+                // und verhindert zusaetzliche libggml*.so-Artefakte im AAR.
+                arguments "-DBUILD_SHARED_LIBS=OFF",
+                         "-DGGML_BACKEND_DL=OFF"
                 // When set, builds whisper.android against the version located
                 // at GGML_HOME instead of the copy bundled with whisper.cpp.
                 if (

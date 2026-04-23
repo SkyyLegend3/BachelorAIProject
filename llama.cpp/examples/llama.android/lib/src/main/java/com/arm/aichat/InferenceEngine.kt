@@ -26,6 +26,18 @@ interface InferenceEngine {
     suspend fun setSystemPrompt(systemPrompt: String)
 
     /**
+     * Optional: configure low-level runtime parameters before loading a model.
+     */
+    suspend fun configureRuntime(
+        nCtx: Int,
+        temperature: Float,
+        threadsMin: Int,
+        threadsMax: Int,
+    ) {
+        // default no-op
+    }
+
+    /**
      * Sends a user prompt to the loaded model and returns a Flow of generated tokens.
      */
     fun sendUserPrompt(message: String, predictLength: Int = DEFAULT_PREDICT_LENGTH): Flow<String>

@@ -8,8 +8,6 @@ sealed class AppResult<out T> {
     data class Success<T>(val data: T) : AppResult<T>()
     data class Error(val message: String, val cause: Throwable? = null) : AppResult<Nothing>()
 
-    val isSuccess: Boolean get() = this is Success
-    val isError: Boolean get() = this is Error
 }
 
 /** Führt [block] aus und wrapped das Ergebnis sicher in [AppResult]. */

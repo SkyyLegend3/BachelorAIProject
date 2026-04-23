@@ -771,7 +771,10 @@ ggml_metal_device_t ggml_metal_device_init(int device) {
             }
 
             dev->props.use_residency_sets = true;
-#if defined(GGML_METAL_HAS_RESIDENCY_SETS)
+#if TARGET_OS_SIMULATOR
+            // Simulator kann bei Residency Sets mit MTLDebugDevice per assert aborten.
+            dev->props.use_residency_sets = false;
+#elif defined(GGML_METAL_HAS_RESIDENCY_SETS)
             dev->props.use_residency_sets = getenv("GGML_METAL_NO_RESIDENCY") == nil;
 #endif
 
@@ -1318,6 +1321,12 @@ static void ggml_metal_log_allocated_size(id<MTLDevice> device, size_t size_alig
 // rset init
 static bool ggml_metal_buffer_rset_init(ggml_metal_buffer_t buf) {
     buf->rset = nil;
+
+#if TARGET_OS_SIMULATOR
+    // Simulator-Metal unterstuetzt Residency Sets nicht zuverlaessig.
+    // Verhindert SIGABRT in newResidencySetWithDescriptor.
+    return true;
+#endif
 
     if (!buf->use_residency_sets) {
         return true;

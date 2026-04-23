@@ -22,3 +22,15 @@ interface OnDeviceFormMappingConfigurable {
     fun setOrthographyCorrectionEnabled(enabled: Boolean)
 }
 
+/**
+ * Optionales Interface, damit die UI den lokalen Modellstatus anzeigen kann.
+ */
+interface OnDeviceLlmModelStatusProvider {
+    fun isOnDeviceLlmModelConfigured(): Boolean
+    fun isOnDeviceLlmModelReady(): Boolean
+    fun isOnDeviceLlmModelLoading(): Boolean = false
+    suspend fun warmupOnDeviceLlmModel(): AppResult<Unit> = AppResult.Success(Unit)
+    suspend fun runOnDeviceLlmSelfTest(): AppResult<Unit> =
+        AppResult.Error("On-Device-LLM-Selbsttest nicht verfuegbar.")
+}
+

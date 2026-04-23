@@ -16,6 +16,7 @@ import kotlinx.coroutines.launch
  *
  * Zuständigkeiten:
  * - Startet / stoppt die Aufnahme via [RecordingRepository] auf [Dispatchers.IO]
+ * - Verwaltet Datei-Uploads für externe Audio-Dateien
  * - Hält den [RecordingUiState] als [StateFlow]
  * - Signalisiert per onRecordingFinished den fertigen Dateipfad an den übergeordneten
  *   ViewModel / Navigator, damit die Transkription angestoßen werden kann
@@ -29,6 +30,9 @@ class RecordingViewModel(
 
     /** Callback, der nach dem Stoppen der Aufnahme mit dem Dateipfad aufgerufen wird. */
     var onRecordingFinished: ((filePath: String) -> Unit)? = null
+    
+    /** Callback, der nach Bestaetigung einer hochgeladenen Datei aufgerufen wird. */
+    var onFileSelected: ((filePath: String) -> Unit)? = null
 
     fun onPermissionGranted() {
         _uiState.update { it.copy(isPermissionGranted = true, error = null) }
@@ -74,6 +78,58 @@ class RecordingViewModel(
                     _uiState.update { it.copy(isRecording = false, error = "Aufnahme konnte nicht gestoppt werden: ${e.message}") }
                 }
         }
+    }
+
+    /**
+     * Startet den Datei-Picker für Audio-Dateien.
+     * Setzt das shouldOpenFilePicker Flag, das in der UI abgefragt wird.
+     */
+    fun startFileSelection() {
+        _uiState.update { it.copy(shouldOpenFilePicker = true, isLoadingFile = true, error = null) }
+    }
+
+    /**
+     * Wird aufgerufen, wenn der Datei-Picker geschlossen wurde (erfolgreich oder nicht).
+     * Setzt shouldOpenFilePicker zurück auf false.
+     */
+    fun onFilePickerClosed() {
+        _uiState.update { it.copy(shouldOpenFilePicker = false) }
+    }
+
+    /**
+     * Setzt den ausgewaehlten Dateipfad in den UI-State.
+     * Die Transkription wird erst nach expliziter Bestaetigung gestartet.
+     */
+    fun onFileSelected(filePath: String) {
+        _uiState.update { it.copy(uploadedFilePath = filePath, isLoadingFile = false, shouldOpenFilePicker = false) }
+    }
+
+    /**
+     * Bestaetigt die zuvor ausgewaehlte Datei und startet damit den naechsten Prozessschritt.
+     */
+    fun confirmUploadedFileSelection() {
+        val selectedPath = _uiState.value.uploadedFilePath ?: return
+        onFileSelected?.invoke(selectedPath)
+    }
+
+    /**
+     * Wird aufgerufen, wenn beim Datei-Picker ein Fehler auftritt.
+     */
+    fun onFilePickerError(errorMessage: String) {
+        _uiState.update { 
+            it.copy(
+                isLoadingFile = false, 
+                shouldOpenFilePicker = false,
+                error = errorMessage
+            ) 
+        }
+    }
+
+    /**
+     * Löscht die aktuell hochgeladene Datei.
+     */
+    fun clearUploadedFile() {
+        _uiState.update { it.copy(uploadedFilePath = null, isLoadingFile = false, shouldOpenFilePicker = false) }
     }
 
     fun clearError() {

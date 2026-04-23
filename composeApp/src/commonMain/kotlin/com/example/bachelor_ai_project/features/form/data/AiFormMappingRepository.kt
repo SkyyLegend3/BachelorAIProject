@@ -5,6 +5,7 @@ import com.example.bachelor_ai_project.core.result.runCatchingResult
 import com.example.bachelor_ai_project.features.form.domain.FormDefinitionProvider
 import com.example.bachelor_ai_project.features.form.domain.FormMappingRepository
 import com.example.bachelor_ai_project.features.form.domain.LlmFieldMappingResponse
+import com.example.bachelor_ai_project.features.form.domain.MappingStrategy
 import com.example.bachelor_ai_project.features.form.domain.TranscriptMappingResult
 import com.example.bachelor_ai_project.features.form.domain.TranscriptToFormMapper
 import com.example.bachelor_ai_project.features.transcription.domain.TranscriptionResponse
@@ -151,6 +152,7 @@ class AiFormMappingRepository(
         TranscriptMappingResult(
             speakerBlocks = speakerBlocks,
             fieldAnswers = filteredAnswers,
+            mappingStrategy = MappingStrategy.CLOUD_LLM,
         )
     }
 }

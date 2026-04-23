@@ -116,10 +116,6 @@ class TranscriptionViewModel(
 
     fun supportsOnDeviceTranscription(): Boolean = transcribeOnDeviceAudio != null
 
-    fun clearError() {
-        _uiState.update { it.copy(error = null) }
-    }
-
     fun reset() {
         _uiState.update { TranscriptionUiState() }
     }

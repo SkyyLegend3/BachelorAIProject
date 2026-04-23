@@ -1,6 +1,164 @@
 # Changelog
 
+## Stand: 2026-03-23
+
+## Bugfix: AudioFilePicker final stabil auf Android + iOS
+- iOS On-Device UI-Log erweitert: Im Prozess-Log wird jetzt explizit ausgewiesen, ob On-Device-LMMapping die LLM-Antwort genutzt hat oder auf Fallback/Heuristik lief.
+  - Neue Logzeilen in `FormViewModel`: `On-Device: LLM genutzt`, `On-Device: LLM + Fallback/Heuristik genutzt`, `On-Device: Fallback/Heuristik genutzt`.
+- iOS On-Device Anti-Halluzinations-Fix im Formular-Mapping:
+  - `OnDeviceLlmFormMappingRepository.ios.kt` filtert LLM-Antworten jetzt strikt gegen Transkript-Evidenz.
+  - Antworten werden nur uebernommen, wenn sie als Phrase im Transkript vorkommen oder alle inhaltstragenden Tokens im Transkript belegbar sind.
+  - Nicht belegbare LLM-Inhalte werden verworfen und fallen auf Heuristik/Fallback zurueck.
+  - Ziel: Keine erfundenen Learnings/Antworten mehr bei iOS On-Device-LMMapping.
+- iOS Crashfix (llama): `llama_batch_add` in `iosApp/iosApp/LibLlama.swift` gehaertet.
+  - Entferntes Force-Unwrap auf `batch.seq_id[...]!` durch Guard-Checks.
+  - Defensiver Schutz gegen nil-Pointer in `token/pos/n_seq_id/seq_id/logits`.
+  - Batch-Overflow-Schutz eingebaut und Batch-Kapazitaet auf `2048` angehoben (statt `512`).
+  - Ziel: `Fatal error: Unexpectedly found nil while unwrapping an Optional value` bei iOS-Inferenz vermeiden.
+- iOS-Dateipicker wurde aus fehleranfälliger Swift/Kotlin-Bridge entfernt und direkt in `composeApp/src/iosMain/kotlin/com/example/bachelor_ai_project/features/recording/ui/RequestAudioFilePickerImpl.ios.kt` implementiert.
+- iOS nutzt jetzt nativen `UIDocumentPickerViewController` über Kotlin/Native (`forOpeningContentTypes = listOf(UTTypeAudio)`), inklusive Cancel-/Fehlerbehandlung und Rückgabe der gewählten Datei-URL.
+- Defekte iOS-Bridge-Experimente wurden bereinigt; `iosApp/iosApp/IOSAudioFilePickerBridge.swift` ist nun ein harmloser no-op Stub.
+- `iosApp/iosApp/iOSApp.swift` registriert keinen separaten Audio-Picker-Bridge-Call mehr.
+- Alte Registry-Reste für den verworfenen Bridge-Ansatz wurden entfernt:
+  - `composeApp/src/commonMain/kotlin/com/example/bachelor_ai_project/core/util/IosAudioFilePickerRegistry.kt`
+  - `composeApp/src/iosMain/kotlin/com/example/bachelor_ai_project/core/util/IosAudioFilePickerRegistry.ios.kt`
+  - `composeApp/src/androidMain/kotlin/com/example/bachelor_ai_project/core/util/IosAudioFilePickerRegistry.android.kt`
+- `composeApp/src/iosMain/kotlin/com/example/bachelor_ai_project/core/util/AudioFilePicker.ios.kt` wurde als klarer Fallback ohne Registry-Abhängigkeit bereinigt.
+- Android-Picker bleibt Compose-basiert über `ActivityResultContracts.OpenDocument()` in `composeApp/src/androidMain/kotlin/com/example/bachelor_ai_project/features/recording/ui/RequestAudioFilePickerImpl.android.kt`.
+- Android Cloud-Transkription nach Dateiupload gefixt: `readFileBytes(...)` unter Android unterstützt jetzt `content://`-URIs aus dem Picker via `ContentResolver` (statt nur `File(path)`).
+  - Datei: `composeApp/src/androidMain/kotlin/com/example/bachelor_ai_project/features/transcription/domain/FileReader.android.kt`
+  - Behebt Fehler wie `open failed: ENOENT` bei Pfaden im Format `content://...`.
+- Android Cloud `invalid file format` nach Dateiupload gefixt:
+  - Dateipicker kopiert die gewählte Datei jetzt in eine lokale Cache-Datei und gibt einen echten Dateipfad zurück (`RequestAudioFilePickerImpl.android.kt`).
+  - OpenAI-Multipart nutzt nun dynamischen Dateinamen + abgeleiteten MIME-Type statt statischem `recording.m4a`/`audio/mp4` (`OpenAiTranscriptionRepository.kt`).
+  - `Content-Disposition` des Datei-Parts wurde auf valides `form-data; name="file"; filename="..."` korrigiert (vorher fehleranfällig nur `filename="..."`).
+  - Upload-Dateiendung wird jetzt zusätzlich aus Magic-Bytes erkannt (z. B. WAV/OGG/MP4), damit Name/MIME konsistent zum echten Dateicontent sind.
+  - Multipart-Header wurden vereinfacht (Ktor setzt `name` selbst), um doppelte/inkonsistente `Content-Disposition`-Parameter zu vermeiden.
+  - Diagnose erweitert: Upload-Log enthält jetzt Dateiname, Content-Type, Byte-Länge, Magic-Bytes (hex/ascii) und MP4-`ftyp`-Brand zur schnellen Analyse von Formatfehlern.
+  - Zusätzlicher Android-Fix: Wenn der Upload `ftyp=3gp4` hat, wird die Audiospur beim Dateiauswählen in einen MP4/M4A-Container remuxt, bevor sie an OpenAI gesendet wird (`RequestAudioFilePickerImpl.android.kt`).
+- Upload-Confirm-Flow korrigiert: Der Haken-Button stößt jetzt tatsächlich die Transkription an (`confirmUploadedFileSelection()`), statt nur erneut den Dateipfad zu setzen.
+- Recording-UI angepasst (Android + iOS / commonMain):
+  - `Datei hochladen`, `X` und `✓` sind bei gewählter Datei jetzt in **einer gemeinsamen Zeile**.
+  - `X` und `✓` sind als normale Buttons im selben Stil dargestellt, mit **weißem Text auf lila Hintergrund**.
+  - Der ausgewählte Dateiname wird unterhalb der Button-Reihe angezeigt.
+- Neues Hilfsskript für Android-Modell-Setup nach App-Neuinstallation:
+  - `scripts/push_android_models.sh`
+  - Pusht lokales Whisper + Llama per `adb` in die App-Sandbox (`run-as`) und nutzt bei Bedarf Werte aus `local.properties` (`llama.model.path`, `whisper.model.path`).
+  - Ergänzt: Quellpfade können jetzt ebenfalls aus `local.properties` kommen (`llama.model.push.src`, `whisper.model.push.src`), mit Priorität `CLI > local.properties > Fallback`.
+  - Fix: robuster `run-as`-Kopierschritt mit expliziten Zielverzeichnissen (`mkdir -p` je Zielpfad) und Debug-Ausgabe der aufgelösten Zielpfade.
+  - Fix: temporäre Push-Dateien liegen nun unter `/data/local/tmp/.bachelor_models` statt `/sdcard`, damit Zugriffsprobleme beim `run-as`-Copy reduziert werden.
+- Neues Hilfsskript für iOS-Simulator-Modell-Setup nach App-Neuinstallation:
+  - `scripts/push_ios_models.sh`
+  - Kopiert lokales Whisper + Llama via `xcrun simctl get_app_container ... data` nach `Documents/models` im Simulator-Container.
+  - Unterstützt `local.properties`-Quellpfade (`llama.model.push.src`, `whisper.model.push.src`) sowie CLI-Overrides.
+- `AppViewModel` verdrahtet Datei-Upload jetzt explizit auf `transcriptionViewModel.transcribe(filePath)`.
+- iOS-On-Device-LLM-Statusprüfung erweitert: Neben `LLAMA_MODEL_PATH` werden jetzt auch `Documents/models/model.gguf`, ein konfigurierter Dateiname in `Documents/models/` sowie die erste gefundene `*.gguf` in `Documents/models` erkannt.
+- iOS-Bridge (`IOSLlamaBridge.swift`) sucht ebenfalls in `Documents/models` nach beliebiger `*.gguf`, falls `model.gguf` nicht vorhanden ist.
+- iOS-Dateiupload/Transkription gefixt: Upload-Pfade werden nun robust als lokale Pfade verarbeitet (statt `file://...` URI-String mit `%20`), damit lokale Whisper-Transkription die Datei findet.
+  - `RequestAudioFilePickerImpl.ios.kt` gibt bevorzugt `NSURL.path` weiter.
+  - `IOSWhisperBridge.swift` normalisiert eingehende Pfade (`file://`, percent-encoding) vor `fileExists` und Transkription.
+- iOS-Simulator-Crash beim Transkribieren behoben: Metal Residency Sets werden im Simulator deaktiviert, um `MTLDebugDevice newResidencySetWithDescriptor`-Assertion (`device does not support residency sets`) zu vermeiden.
+  - `iosApp/llama.cpp/ggml/src/ggml-metal/ggml-metal-device.m`
+  - `whisper.cpp/ggml/src/ggml-metal/ggml-metal-device.m`
+- Zusätzliche Härtung: Residency Sets werden im Simulator nun schon bei der Device-Initialisierung deaktiviert (`use_residency_sets = false`), damit auch die Residency-Collection gar nicht erst erstellt wird.
+- Verifiziert mit Builds:
+  - `:composeApp:compileDebugKotlinAndroid` ✅
+  - `:composeApp:compileKotlinIosSimulatorArm64` ✅
+
+## Stand: 2026-03-20
+
+## Android: Direct-Llama Prefill-Timeout gefixt
+- `ai_chat.cpp` (`DirectLlamaBridge.nativeInfer`) nutzt fuer Prefill jetzt kleine Decode-Chunks statt eines grossen Blocks, damit Timeout/Cancel waehrend Prefill regelmaessig greifen.
+- Timeout-Pruefung erfolgt nun vor und nach jedem Prefill-Decode-Chunk; dadurch endet ein haengender Prefill kontrolliert mit `__DIRECT_LLM_ERROR__: timeout`.
+- Direct-Load (`nativeLoadModel`) setzt `n_batch/n_ubatch` fuer Mobile konservativer (max. 128 statt 512), um Compute-/Reserve-Last fuer On-Device-Mapping zu senken.
+
+## Android: Direct-Prefill weiter auf Single-Token-Schritte getunt
+- `DIRECT_PREFILL_CHUNK` auf `1` gesenkt, damit ein einzelner Prefill-Decode auf langsamen Geraeten nicht mehr mehrere Sekunden am Stueck blockiert.
+- `DIRECT_MOBILE_BATCH_MAX` auf `32` reduziert und `llama_batch_init(...)` im Direct-Path auf die mobile Batch-Groesse ausgerichtet (statt fester 512), um Graph-/Compute-Overhead weiter zu druecken.
+
+## Android: Direct-JNI Decode-Pfad beschleunigt
+- `ai_chat.cpp` (Direct-Llama-Pfad) wurde im Hotpath optimiert: keine `llama_batch_init/free`-Allokation mehr pro Prefill-Chunk oder pro generiertem Token.
+- Prefill und Generation nutzen jetzt den wiederverwendbaren globalen Batch (`g_batch`), wodurch JNI-/Allocator-Overhead in der Inferenz deutlich reduziert wird.
+- Runtime-Threadzahl wird beim Direct-Load wieder aus `threads.min/max` + CPU-Anzahl abgeleitet (statt fest auf `2`), inklusive konsistenter `n_batch/n_ubatch`-Konfiguration.
+- Sehr chatty Schritt-fuer-Schritt-Logs im Inferenzloop reduziert, um Logcat-I/O als Laufzeitbremse zu vermeiden.
+
+## Android: Typbereinigung im On-Device-LMMapping
+- `OnDeviceLlmFormMappingRepository.android.kt` nutzt in den drei relevanten Listen/Signaturen jetzt den korrekten Domain-Typ `FormQuestion` statt `Any`.
+- Entfernt wurden die unsicheren Casts (`UNCHECKED_CAST`) in `buildQuestionGroups`, `buildCompactPrompt` und `buildFocusedTranscript` sowie die provisorische `typealias dynamicQuestion = Any`.
+- Ergebnis: klarere Typen im Mapping-Flow und weniger Cast-Risiko bei Refactorings.
+
+## Android: Neue On-Device-Strategie mit Direct llama.cpp JNI
+- Neuer direkter JNI-Wrapper `com.arm.aichat.direct.DirectLlamaBridge` eingefuehrt (ohne Flow-basiertes `sendUserPrompt`), inkl. nativer Methoden fuer Init, Load, Infer, Cancel, Unload und Shutdown.
+- Native `ai_chat.cpp` um Direct-Entry-Points erweitert: Inferenz laeuft als zusammenhaengender nativer Call mit internem Timeout-/Cancel-Check und klaren Fehlerpraefixen.
+- Neuer Engine-Adapter `DirectLlamaOnDeviceLlmEngine` in `composeApp` hinzugefuegt: einmaliges Modellladen, app-interner Modellpfad, Recovery nach Fehlern und Diagnose-Logs.
+- `OnDeviceLlmEngineProvider.android.kt` priorisiert jetzt den Direct-JNI-Pfad und faellt nur bei Initialisierungsfehlern auf den bisherigen AiChat-Adapter zurueck.
+
+## Android: On-Device-Llama gegen Timeout gehaertet
+- `LlamaCppOnDeviceLlmEngine.completeJson()` auf den vereinbarten Ablauf umgestellt (Model-Check, System-Prompt, Token-Streaming mit Timing-Logs), damit der Inferenzpfad klarer diagnostizierbar bleibt.
+- Modellpfad fuer Native-Zugriff gehaertet: liegt der konfigurierte Pfad nicht im app-internen Speicher, wird das GGUF vor dem Laden in `files/models/` kopiert und von dort geladen.
+- Timeout-Recovery erweitert: nach `Future`-Timeout wird die Engine explizit bereinigt (`cleanUp`/`destroy`), intern verworfen und beim naechsten Lauf neu erstellt.
+- `InferenceEngineImpl.destroy()` setzt jetzt die Singleton-Instanz zurueck, damit nach einem harten Timeout wirklich eine frische Engine instanziiert werden kann.
+
+## Android: Timeout-Wrapper auf Coroutines vereinfacht
+- `LlamaCppOnDeviceLlmEngine.runEngineCallWithTimeout()` nutzt jetzt `withContext(Dispatchers.Default)` + `withTimeout(...)` statt Executor/Future-Wrapper.
+- `modelLoaded` wird erst gesetzt, wenn der Engine-Status nach dem Ladevorgang tatsaechlich `isModelLoaded == true` ist; bei nicht-bereitem Zustand wird mit klarer Fehlermeldung abgebrochen.
+
+## Android: On-Device LLM-Testbutton im Formular
+- Unter den Formularfeldern wird im Modus `On Device` (nur wenn On-Device-Mapping verfuegbar ist) jetzt ein Button `LLM Test` angezeigt.
+- Der Test fuehrt eine lokale LLM-Testanfrage aus und zeigt danach direkt unter dem Button das Ergebnis `LLM funktioniert` oder `LLM fail` an.
+- Der Ablauf ist an das On-Device-Status-Interface angebunden (`runOnDeviceLlmSelfTest`) und wird im Prozess-Log dokumentiert (`LLM-Test gestartet/erfolgreich/fehlgeschlagen`).
+
 ## Stand: 2026-03-19
+
+## Android: Fix fuer `UnsatisfiedLinkError` bei On-Device-LLM
+- `llamaAndroidLib` nutzt nicht mehr die alten Backup-Artefakte (`classes.jar` + `jniLibs`) aus `_restore_backup/...`, sondern wieder konsistent die aktuellen Quellen aus dem Modul selbst.
+- Dadurch kommen Java-Methoden und JNI-Symbole aus demselben Buildstand; der Fehler `No implementation found ... configureGeneration(int,float,int,int)` wird damit behoben.
+- Packaging-Bereinigung: `libai-chat.so`-`pickFirst` entfernt, damit keine veraltete Native-Binary die aktuelle Implementierung ueberschreibt.
+
+## Android + iOS: Prozess-Log zeigt Mapping-Quelle
+- `TranscriptMappingResult` um `mappingStrategy` erweitert, damit die Pipeline die tatsaechlich genutzte Quelle transportiert (`Cloud LLM`, `On-Device LLM`, `Mixed`, `Heuristik/Fallback`).
+- Repositories markieren ihre Ergebnisse nun explizit mit der jeweiligen Strategie (Cloud-LLM, On-Device-LLM, Keyword/Heuristik-Fallback).
+- `FormViewModel` schreibt die Mapping-Quelle in den vorhandenen UI-Prozess-Log, sodass direkt sichtbar ist, ob LLM-Mapping oder Heuristik/Fallback verwendet wurde.
+
+## Android + iOS: LLM-Prioritaet und roter Fallback-Hinweis
+- On-Device-Merge leitet die Mapping-Quelle jetzt aus den tatsaechlich verwendeten Feldkandidaten ab (LLM bleibt erste Prioritaet pro Feld).
+- Wenn On-Device nicht mit LLM mappen kann, wird der konkrete Grund (`Engine fehlt`, `LLM-Aufruf fehlgeschlagen`, `ungueltige Antwort`) als Diagnose mitgegeben.
+- Die Formular-UI zeigt diesen Grund im Prozessbereich als rote Meldung an, auch wenn Heuristik/Fallback erfolgreich Felder befuellt.
+
+## Android + iOS: Sichtbarer LLM-Modellstatus im Formular
+- Unter der Modusauswahl wird bei aktivem `On Device` ein sauberer Status-Indikator angezeigt: gruener Kreis mit `LLM-Model bereit` oder roter Kreis mit `LLM-Model nicht gefunden`.
+- Der Status basiert auf dem konfigurierten `LLAMA_MODEL_PATH` und einer plattformspezifischen Dateiexistenzpruefung (Android + iOS), der Text wird wie gewuenscht schwarz dargestellt.
+
+## Android + iOS: KMP-Fix fuer FormViewModel-Zeitmessung
+- `FormViewModel` nutzt fuer Mapping-Timing jetzt `TimeSource.Monotonic` statt JVM-spezifischer Aufrufe (`System.currentTimeMillis`, `Thread.currentThread`).
+- Prozess-Log `Mapping-Start` ist dadurch plattformneutral und kompiliert wieder auf iOS im `commonMain`-Pfad.
+- Verifiziert mit `:composeApp:compileKotlinIosSimulatorArm64` und `:composeApp:compileDebugKotlinAndroid` (beide erfolgreich).
+
+## Android + iOS: Einmaliges LLM-Modellladen + Ladezustand in UI
+- Android-LLM-Engine laedt das GGUF-Modell jetzt einmalig und nutzt es danach wieder, statt bei jedem Mappinglauf neu zu laden.
+- On-Device-Status erweitert: konfiguriert/ready/loading inkl. Warmup-Call beim Umschalten auf On-Device.
+- UI unter der On-Device-Auswahl zeigt jetzt zusaetzlich den Zustand `Model wird geladen` waehrend des initialen Ladens.
+
+## Android: UI-Freeze beim LLM-Warmup behoben
+- Schweres On-Device-Warmup (Modell laden) laeuft jetzt explizit auf `Dispatchers.Default` statt im Main-Thread-Kontext des `viewModelScope`.
+- `LlamaCppOnDeviceLlmEngine.warmupModel()` sichert den Dispatcher-Wechsel zusaetzlich direkt in der Engine ab.
+- Ziel: kein Einfrieren der UI waehrend `Model wird geladen` bzw. `Transkript wird verarbeitet...`.
+
+## Android: On-Device-Inferenz gegen Hänger gehaertet
+- `LlamaCppOnDeviceLlmEngine` nutzt jetzt ein explizites Inferenz-Timeout (`60s`), damit ein blockierender Token-Stream nicht endlos laeuft.
+- Token-Limit fuer Formular-Mapping auf `256` reduziert, um Laufzeit und Last auf mobilen Geraeten zu senken.
+- Zusaetzliches Diagnose-Logging fuer `first token`, `tokenCount` und Fehlzeitpunkt eingebaut, damit Freeze/Ursachen in Logcat klarer sichtbar sind.
+- Warmup und Inferenz werden zusaetzlich in einem dedizierten Worker-Thread mit `Future.get(timeout)` ausgefuehrt, damit auch nicht-kooperativ blockierende Native-Calls die Mapping-Pipeline nicht unbegrenzt festhalten.
+
+## Android: Konfigurierbarer LLM-Performance-Mode
+- `composeApp/build.gradle.kts` liest jetzt zusaetzliche lokale LLM-Performance-Parameter aus `local.properties`: `llama.performance.mode`, `llama.predict.length`, `llama.inference.timeout.ms`.
+- Die Werte werden als `BuildConfig`-Felder in Android bereitgestellt und beim Erzeugen der On-Device-LLM-Engine angewendet.
+- Ziel: schnellere/stabilere Formular-Mappings auf mobilen Geraeten durch kleineres Token-Budget und anpassbares Timeout, ohne Codeaenderung pro Testlauf.
+
+## Android: Runtime-Tuning fuer n_ctx, temperature und Threads
+- On-Device-Llama uebergibt jetzt zusaetzlich `n_ctx`, `temperature` und Thread-Range aus `BuildConfig` an die JNI-Schicht vor dem Modellladen.
+- Native `ai_chat.cpp` nutzt diese Laufzeitwerte fuer Context-Initialisierung (`ctx_params.n_ctx`), Sampler-Temperatur und die Thread-Berechnung (konfigurierter Min/Max-Bereich).
+- Neue lokale Parameter in `local.properties`: `llama.n.ctx`, `llama.temperature`, `llama.threads.min`, `llama.threads.max`.
 
 ## Android: Buildfix nach korrupten Kotlin-Datei-Headern
 - `FormViewModel.kt` bereinigt: versehentlich vorangestellter Codeblock vor der `package`-Deklaration entfernt, sodass Imports/Klasse wieder korrekt geparst werden.
@@ -170,4 +328,28 @@
 - Bei deaktiviertem Toggle arbeitet On-Device moeglichst woertlich ohne aktive Rechtschreibnormalisierung.
 - Toggle-Aenderungen werden im Prozess-Log sichtbar gemacht und im On-Device-Modus direkt auf das letzte Transkript neu angewendet.
 
+## Stand: 2026-03-23
+
+- `Doku.md` hinzugefuegt: umfassende Projektdokumentation (Technologien, Architektur, Feature-Flows, Plattform-Hinweise). (Android + iOS)
+
+## Stand: 2026-03-24
+
+- Android (On-Device-Form-Mapping): Abschneiden von Antwortsaetzen (z. B. `problem` nur `Das Problem`) behoben.
+  - `OnDeviceLlmFormMappingRepository.android.kt`: Prompt-Regel von `maximal 6 Woerter` auf zusammenhaengende Antwortsaetze (bis 220 Zeichen) angepasst.
+  - `OnDeviceLlmEngineProvider.android.kt`: `predictLength` im Performance-Mode nicht mehr auf 16 reduziert (jetzt bis 32), damit JSON-Antworten nicht vorzeitig enden.
+  - `OnDeviceLlmFormMappingRepository.android.kt`: neue Bereinigungsregel fuer LLM-Endartefakte; abschliessende Sequenzen wie `",`/`,"` werden vor dem Befuellen entfernt, damit Felder nicht mit Restzeichen enden.
+  - `OnDeviceLlmFormMappingRepository.android.kt`: Speaker-Platzhalter (`SPEAKER_00`, `Sprecher 1`) werden im Namensfeld explizit verworfen, damit echte Namensaussagen bevorzugt uebernommen werden.
+  - `OnDeviceLlmFormMappingRepository.android.kt`: Fallback-KeyValue-Parsing unterstuetzt quoted Werte mit Kommas robuster; zusaetzliche Kantenbereinigung entfernt Artefakte wie `["...`, `"]`, `",`.
+
+- Android: `whisperAndroidLib` (`whisper.cpp/examples/whisper.android/lib/build.gradle`) auf echten Source-Build mit statischem ggml-Linking festgezogen (`-DBUILD_SHARED_LIBS=OFF`, `-DGGML_BACKEND_DL=OFF`), damit keine Restore-/Prebuilt-JNI-Artefakte fuer ggml mehr noetig sind.
+- Android: ggml-Kollisions-Workaround per `pickFirst` entfernt: `composeApp/build.gradle.kts` und `llama.cpp/examples/llama.android/lib/build.gradle.kts` nutzen kein `**/libggml*.so`-`pickFirst` mehr.
+- Android: Packaging bleibt fuer `libomp.so` weiterhin defensiv auf `pickFirst`, da hier weiterhin ein legitimer transitive Native-Konflikt zwischen den Android-Libs auftreten kann.
+- Android: neues Auswertungsskript `scripts/parse_llm_timings.py` hinzugefuegt, um On-Device-LLM-Laufzeiten aus `DirectLlamaOnDeviceLlmEngine`-Logcat-Zeilen (inkl. p50/p95/avg) reproduzierbar zu messen.
+- Android: `scripts/README.md` ergaenzt mit einem kompakten Messablauf (`adb logcat` aufnehmen + Parser ausfuehren) fuer den erneuten LLM-Pfad-Check.
+- Android: Modellpfad-Aufloesung fuer On-Device-LLM robuster gemacht (`composeApp/src/androidMain/kotlin/com/example/bachelor_ai_project/features/form/data/AndroidLlamaModelPathResolver.kt`), damit bei Dateinamen-/Pfadabweichungen nach Push/Reinstall vorhandene `.gguf`-Modelle in `files/models` trotzdem gefunden werden.
+- Android: `OnDeviceLlmEngineProvider.android.kt` und `OnDeviceLlmFormMappingRepository.android.kt` auf den gemeinsamen Resolver umgestellt; dadurch nutzt Engine-Initialisierung und UI-Status dieselbe reale Modellpfad-Pruefung statt eines starren Einzelpfads.
+- Android: Persistenter roter LLM-Status nach Modellinstallation behoben: `OnDeviceLlmFormMappingRepository.android.kt` kann eine initial fehlende Engine jetzt lazy nacherzeugen und blockiert Warmup/Selftest nicht mehr auf einem fruehen `null`-Snapshot.
+- Android: On-Device-Statusanzeige praezisiert (`FormUiState.kt`, `FormViewModel.kt`, `FormScreen.kt`) mit separatem Zustand `isOnDeviceLlmModelConfigured`; UI zeigt bei gefundenem, aber noch nicht geladenem Modell jetzt einen Zwischenstatus statt faelschlich "LLM-Model nicht gefunden".
+- Android: Proaktiver Warmup im `FormViewModel`-Init aktiviert, damit Modellladen frueher startet und der Status schneller auf "bereit" wechselt.
+- Android: Llama-Warmup gegen fehlerhafte Engine-Zustaende gehaertet (`LlamaCppOnDeviceLlmEngine.android.kt`): vor `configureRuntime` wird ein vorhandener `Error`-State per `cleanUp()` zurueckgesetzt und auf `Initialized` gewartet, damit der Fehler "Cannot configure runtime in Error!" nicht mehr den Modell-Load blockiert.
 

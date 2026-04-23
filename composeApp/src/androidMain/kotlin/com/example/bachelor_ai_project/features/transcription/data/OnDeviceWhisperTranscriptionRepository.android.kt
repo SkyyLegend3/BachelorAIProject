@@ -209,7 +209,7 @@ private fun decodeCompressedAudioToPcm(path: String): DecodedPcm {
     require(trackIndex >= 0 && format != null) { "Kein Audio-Track gefunden: $path" }
     extractor.selectTrack(trackIndex)
 
-    val inputFormat = checkNotNull(format) { "Audio-Format fehlt: $path" }
+    val inputFormat = format
     val mime = inputFormat.getString(MediaFormat.KEY_MIME).orEmpty()
     require(mime.isNotBlank()) { "Audio-MIME fehlt: $path" }
 

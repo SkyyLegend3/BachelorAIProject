@@ -96,6 +96,15 @@ final class IOSLlamaBridge: NSObject, IosLlmBridge {
             if fileManager.fileExists(atPath: documentsModel) {
                 return documentsModel
             }
+
+            let docsModelsDir = documents.appendingPathComponent("models")
+            if let contents = try? fileManager.contentsOfDirectory(at: docsModelsDir, includingPropertiesForKeys: nil),
+               let anyDocsGguf = contents.first(where: { $0.pathExtension.lowercased() == "gguf" }) {
+                let candidate = anyDocsGguf.path
+                if fileManager.fileExists(atPath: candidate) {
+                    return candidate
+                }
+            }
         }
 
         return nil

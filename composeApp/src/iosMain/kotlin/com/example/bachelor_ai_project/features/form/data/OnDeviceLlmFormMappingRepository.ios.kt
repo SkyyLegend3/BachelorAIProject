@@ -1,19 +1,25 @@
 package com.example.bachelor_ai_project.features.form.data
 
+import com.example.bachelor_ai_project.core.config.AppConfig
 import com.example.bachelor_ai_project.core.result.AppResult
 import com.example.bachelor_ai_project.core.result.runCatchingResult
 import com.example.bachelor_ai_project.features.form.domain.FormDefinitionProvider
 import com.example.bachelor_ai_project.features.form.domain.FormMappingRepository
 import com.example.bachelor_ai_project.features.form.domain.LlmFieldMappingResponse
+import com.example.bachelor_ai_project.features.form.domain.MappingStrategy
 import com.example.bachelor_ai_project.features.form.domain.OnDeviceFormMappingConfigurable
+import com.example.bachelor_ai_project.features.form.domain.OnDeviceLlmModelStatusProvider
 import com.example.bachelor_ai_project.features.form.domain.TranscriptMappingResult
 import com.example.bachelor_ai_project.features.form.domain.TranscriptToFormMapper
+import kotlinx.cinterop.ExperimentalForeignApi
 import com.example.bachelor_ai_project.features.transcription.domain.TranscriptionResponse
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
+import platform.Foundation.NSFileManager
+import platform.Foundation.NSHomeDirectory
 
 /**
  * iOS-On-Device-Repository fuer lokales LLM-Mapping.
@@ -25,13 +31,24 @@ class OnDeviceLlmFormMappingRepository(
     private val definitionProvider: FormDefinitionProvider,
     private val llmEngine: OnDeviceLlmEngine?,
     private val fallbackRepository: FormMappingRepository,
-) : FormMappingRepository, OnDeviceFormMappingConfigurable {
+) : FormMappingRepository, OnDeviceFormMappingConfigurable, OnDeviceLlmModelStatusProvider {
 
     private data class FieldSpec(
         val id: String,
         val label: String,
         val normalizedLabel: String,
         val keywords: Set<String>,
+    )
+
+    private enum class CandidateSource {
+        LLM,
+        HEURISTIC,
+        FALLBACK,
+    }
+
+    private data class MergeOutcome(
+        val answers: Map<String, String>,
+        val usedSources: Set<CandidateSource>,
     )
 
     private val mapper = TranscriptToFormMapper()
@@ -63,6 +80,55 @@ class OnDeviceLlmFormMappingRepository(
 
     override fun setOrthographyCorrectionEnabled(enabled: Boolean) {
         orthographyCorrectionEnabled = enabled
+    }
+
+    override fun isOnDeviceLlmModelConfigured(): Boolean {
+        return resolveExistingLlamaModelPath() != null
+    }
+
+    override fun isOnDeviceLlmModelReady(): Boolean {
+        return llmEngine != null && isOnDeviceLlmModelConfigured()
+    }
+
+    override fun isOnDeviceLlmModelLoading(): Boolean = false
+
+    @OptIn(ExperimentalForeignApi::class)
+    private fun resolveExistingLlamaModelPath(): String? {
+        val fileManager = NSFileManager.defaultManager
+        val configured = AppConfig.llamaModelPath.trim()
+
+        if (configured.isNotBlank() && fileManager.fileExistsAtPath(configured)) {
+            return configured
+        }
+
+        val docsModelsDir = NSHomeDirectory() + "/Documents/models"
+        val defaultDocsModel = "$docsModelsDir/model.gguf"
+        if (fileManager.fileExistsAtPath(defaultDocsModel)) {
+            return defaultDocsModel
+        }
+
+        if (configured.isNotBlank()) {
+            val configuredName = configured.substringAfterLast('/')
+            if (configuredName.isNotBlank()) {
+                val docsConfiguredName = "$docsModelsDir/$configuredName"
+                if (fileManager.fileExistsAtPath(docsConfiguredName)) {
+                    return docsConfiguredName
+                }
+            }
+        }
+
+        val files = fileManager.contentsOfDirectoryAtPath(docsModelsDir, error = null) as? List<*>
+        val firstGguf = files
+            ?.mapNotNull { it as? String }
+            ?.firstOrNull { it.lowercase().endsWith(".gguf") }
+        if (firstGguf != null) {
+            val docsAnyGguf = "$docsModelsDir/$firstGguf"
+            if (fileManager.fileExistsAtPath(docsAnyGguf)) {
+                return docsAnyGguf
+            }
+        }
+
+        return null
     }
 
     override suspend fun mapTranscript(response: TranscriptionResponse): AppResult<TranscriptMappingResult> {
@@ -155,41 +221,89 @@ class OnDeviceLlmFormMappingRepository(
                 Antworte jetzt strikt im JSON-Schema.
             """.trimIndent()
 
-            val llmAnswers = llmEngine?.let { engine ->
-                runCatching {
-                    val raw = engine.completeJson(systemPrompt = systemPrompt, userPrompt = userPrompt)
-                    extractAnswers(raw)
-                }.getOrElse { error ->
-                    println("DEBUG OnDeviceLlmFormMappingRepository: LLM-Fehler, nutze Heuristik/Fallback: ${error.message}")
+            var llmFailureReason: String? = null
+            var llmAttempted = false
+            val llmAnswers = when (val engine = llmEngine) {
+                null -> {
+                    llmFailureReason = "Keine On-Device-LLM-Engine verfuegbar (Bridge/Modell nicht initialisiert)."
                     emptyMap()
                 }
-            } ?: emptyMap()
+                else -> {
+                    llmAttempted = true
+                    val rawResult = runCatching {
+                        engine.completeJson(systemPrompt = systemPrompt, userPrompt = userPrompt)
+                    }
+                    if (rawResult.isFailure) {
+                        val error = rawResult.exceptionOrNull()
+                        llmFailureReason = "LLM-Aufruf fehlgeschlagen: ${error?.message ?: "unbekannter Fehler"}"
+                        println("DEBUG OnDeviceLlmFormMappingRepository: LLM-Fehler, nutze Heuristik/Fallback: ${error?.message}")
+                        emptyMap()
+                    } else {
+                        val extracted = extractAnswers(rawResult.getOrNull().orEmpty())
+                        if (extracted.isEmpty()) {
+                            llmFailureReason = "LLM-Antwort war leer oder nicht im erwarteten JSON-Schema."
+                        }
+                        extracted
+                    }
+                }
+            }
 
             val fallbackAnswers = when (val fallback = fallbackRepository.mapTranscript(response)) {
                 is AppResult.Success -> fallback.data.fieldAnswers
                 is AppResult.Error -> emptyMap()
             }
 
-            val sanitizedLlmAnswers = sanitizeLlmAnswers(llmAnswers)
-            val answers = mergeAnswersPerField(
+            val transcriptEvidenceText = if (transcriptTextPlain.isNotBlank()) {
+                transcriptTextPlain
+            } else {
+                transcriptTextWithSpeakers
+            }
+
+            val sanitizedLlmAnswers = filterLlmAnswersByTranscriptEvidence(
+                llmAnswers = sanitizeLlmAnswers(llmAnswers),
+                transcriptText = transcriptEvidenceText,
+            )
+            if (llmAnswers.isNotEmpty() && sanitizedLlmAnswers.isEmpty() && llmFailureReason.isNullOrBlank()) {
+                llmFailureReason = "LLM-Antwort enthielt Inhalte, die im Transkript nicht belegbar waren."
+            }
+
+            val mergeOutcome = mergeAnswersPerField(
                 llmAnswers = sanitizedLlmAnswers,
                 heuristicAnswers = heuristicAnswers,
                 fallbackAnswers = fallbackAnswers,
             )
-
-            println(
-                "DEBUG OnDeviceLlmFormMappingRepository: answers llm=${sanitizedLlmAnswers.keys} " +
-                    "heuristic=${heuristicAnswers.keys} fallback=${fallbackAnswers.keys} final=${answers.keys}"
-            )
-            println("DEBUG OnDeviceLlmFormMappingRepository: orthographyCorrectionEnabled=$correctionEnabled")
-            if (answers.isEmpty()) {
-                error("Keine Inhalte fuer die Formularfelder erkannt")
+            val answers = mergeOutcome.answers
+            val mappingStrategy = when {
+                CandidateSource.LLM in mergeOutcome.usedSources && mergeOutcome.usedSources.size == 1 -> MappingStrategy.ON_DEVICE_LLM
+                CandidateSource.LLM in mergeOutcome.usedSources -> MappingStrategy.MIXED
+                mergeOutcome.usedSources.isNotEmpty() -> MappingStrategy.HEURISTIC_FALLBACK
+                else -> MappingStrategy.UNKNOWN
             }
 
-            TranscriptMappingResult(
-                speakerBlocks = speakerBlocks,
-                fieldAnswers = answers,
-            )
+            val effectiveLlmFailureReason = when (mappingStrategy) {
+                MappingStrategy.ON_DEVICE_LLM,
+                MappingStrategy.MIXED,
+                MappingStrategy.CLOUD_LLM,
+                -> null
+                MappingStrategy.HEURISTIC_FALLBACK,
+                MappingStrategy.UNKNOWN,
+                -> llmFailureReason
+            }
+
+              println(
+                  "DEBUG OnDeviceLlmFormMappingRepository: answers llm=${sanitizedLlmAnswers.keys} " +
+                      "heuristic=${heuristicAnswers.keys} fallback=${fallbackAnswers.keys} final=${answers.keys}"
+              )
+              println("DEBUG OnDeviceLlmFormMappingRepository: orthographyCorrectionEnabled=$correctionEnabled")
+
+                TranscriptMappingResult(
+                    speakerBlocks = speakerBlocks,
+                    fieldAnswers = answers,
+                    mappingStrategy = mappingStrategy,
+                    llmFailureReason = effectiveLlmFailureReason,
+                    llmAttempted = llmAttempted,
+                    llmReturnedAnswers = sanitizedLlmAnswers.isNotEmpty(),
+                )
         }
 
         return when (primaryResult) {
@@ -321,24 +435,91 @@ class OnDeviceLlmFormMappingRepository(
         return llmAnswers
     }
 
+    private fun filterLlmAnswersByTranscriptEvidence(
+        llmAnswers: Map<String, String>,
+        transcriptText: String,
+    ): Map<String, String> {
+        if (llmAnswers.isEmpty()) return emptyMap()
+        if (transcriptText.isBlank()) return emptyMap()
+
+        val transcriptNorm = normalizeTextForEvidence(transcriptText)
+        val transcriptTokens = tokenizeForEvidence(transcriptText).toSet()
+
+        return llmAnswers.filterValues { answer ->
+            isAnswerGroundedInTranscript(
+                answer = answer,
+                transcriptNorm = transcriptNorm,
+                transcriptTokens = transcriptTokens,
+            )
+        }
+    }
+
+    private fun isAnswerGroundedInTranscript(
+        answer: String,
+        transcriptNorm: String,
+        transcriptTokens: Set<String>,
+    ): Boolean {
+        val raw = answer.trim()
+        if (raw.isBlank()) return false
+
+        val answerNorm = normalizeTextForEvidence(raw)
+        if (answerNorm.length < 3) return false
+
+        // Strikt: Wenn die normalisierte Antwort als Phrase vorkommt, ist sie belegt.
+        if (transcriptNorm.contains(answerNorm)) return true
+
+        val answerTokens = tokenizeForEvidence(raw)
+        if (answerTokens.isEmpty()) return false
+
+        // Keine Halluzination: alle inhaltstragenden Tokens muessen im Transkript vorkommen.
+        return answerTokens.all { it in transcriptTokens }
+    }
+
+    private fun normalizeTextForEvidence(value: String): String = value
+        .lowercase()
+        .replace("ä", "ae")
+        .replace("ö", "oe")
+        .replace("ü", "ue")
+        .replace("ß", "ss")
+        .replace(Regex("[^a-z0-9]+"), " ")
+        .replace(Regex("\\s+"), " ")
+        .trim()
+
+    private fun tokenizeForEvidence(value: String): List<String> {
+        val stopWords = setOf(
+            "ich", "du", "er", "sie", "es", "wir", "ihr", "sie",
+            "der", "die", "das", "ein", "eine", "einer", "einem", "einen",
+            "und", "oder", "aber", "mit", "ohne", "im", "in", "am", "an", "auf", "zu",
+            "ist", "war", "sind", "waren", "hat", "habe", "haben", "wurde", "worden",
+            "dass", "das", "dem", "den", "des", "von", "fuer", "fur", "bei", "als"
+        )
+
+        return normalizeTextForEvidence(value)
+            .split(" ")
+            .map { it.trim() }
+            .filter { it.length >= 3 }
+            .filterNot { it in stopWords }
+    }
+
     private fun mergeAnswersPerField(
         llmAnswers: Map<String, String>,
         heuristicAnswers: Map<String, String>,
         fallbackAnswers: Map<String, String>,
-    ): Map<String, String> {
+    ): MergeOutcome {
         val result = mutableMapOf<String, String>()
         val usedNormalizedAnswers = mutableSetOf<String>()
+        val usedSources = mutableSetOf<CandidateSource>()
 
         fieldSpecs.forEach { field ->
             val candidates = listOfNotNull(
-                llmAnswers[field.id]?.trim(),
-                heuristicAnswers[field.id]?.trim(),
-                fallbackAnswers[field.id]?.trim(),
-            ).map { candidate ->
-                normalizeCandidateForField(field = field, candidate = candidate)
+                llmAnswers[field.id]?.trim()?.let { CandidateSource.LLM to it },
+                heuristicAnswers[field.id]?.trim()?.let { CandidateSource.HEURISTIC to it },
+                fallbackAnswers[field.id]?.trim()?.let { CandidateSource.FALLBACK to it },
+            ).map { (source, candidate) ->
+                source to normalizeCandidateForField(field = field, candidate = candidate)
             }
 
-            val picked = candidates.firstOrNull { candidate ->
+            val picked = candidates.firstOrNull { (_, candidate) ->
                 isUsableFieldAnswer(
                     field = field,
                     answer = candidate,
@@ -346,13 +527,20 @@ class OnDeviceLlmFormMappingRepository(
                 )
             }
 
-            if (!picked.isNullOrBlank()) {
-                result[field.id] = picked
-                usedNormalizedAnswers += normalizeAnswerValue(picked)
+            if (picked != null) {
+                val (source, answer) = picked
+                if (answer.isNotBlank()) {
+                    result[field.id] = answer
+                    usedSources += source
+                    usedNormalizedAnswers += normalizeAnswerValue(answer)
+                }
             }
         }
 
-        return result
+        return MergeOutcome(
+            answers = result,
+            usedSources = usedSources,
+        )
     }
 
     private fun isUsableFieldAnswer(
@@ -733,4 +921,3 @@ class OnDeviceLlmFormMappingRepository(
         }
     }
 }
-

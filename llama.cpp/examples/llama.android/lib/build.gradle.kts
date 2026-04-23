@@ -56,22 +56,10 @@ android {
         }
     }
 
-    sourceSets {
-        getByName("main") {
-            jniLibs.srcDir(
-                rootProject.file(
-                    "_restore_backup/lib_llama_broken_20260317_093717/build/intermediates/library_jni/debug/copyDebugJniLibsProjectOnly/jni"
-                )
-            )
-        }
-    }
-
     packaging {
         jniLibs {
-            // Backup-jniLibs und CMake liefern teils dieselben nativen Binaries.
+            // Einige Transitive koennen dieselben Native-Binaries mitbringen.
             pickFirsts += setOf(
-                "**/libai-chat.so",
-                "**/libggml*.so",
                 "**/libllama.so",
                 "**/libomp.so",
             )
@@ -89,12 +77,5 @@ android {
 }
 
 dependencies {
-    api(
-        files(
-            rootProject.file(
-                "_restore_backup/lib_llama_broken_20260317_093717/build/intermediates/compile_library_classes_jar/debug/bundleLibCompileToJarDebug/classes.jar"
-            )
-        )
-    )
     api(libs.kotlinx.coroutines.core)
 }
