@@ -338,6 +338,8 @@
   - `OnDeviceLlmFormMappingRepository.android.kt`: Prompt-Regel von `maximal 6 Woerter` auf zusammenhaengende Antwortsaetze (bis 220 Zeichen) angepasst.
   - `OnDeviceLlmEngineProvider.android.kt`: `predictLength` im Performance-Mode nicht mehr auf 16 reduziert (jetzt bis 32), damit JSON-Antworten nicht vorzeitig enden.
   - `OnDeviceLlmFormMappingRepository.android.kt`: neue Bereinigungsregel fuer LLM-Endartefakte; abschliessende Sequenzen wie `",`/`,"` werden vor dem Befuellen entfernt, damit Felder nicht mit Restzeichen enden.
+  - `OnDeviceLlmFormMappingRepository.android.kt`: Speaker-Platzhalter (`SPEAKER_00`, `Sprecher 1`) werden im Namensfeld explizit verworfen, damit echte Namensaussagen bevorzugt uebernommen werden.
+  - `OnDeviceLlmFormMappingRepository.android.kt`: Fallback-KeyValue-Parsing unterstuetzt quoted Werte mit Kommas robuster; zusaetzliche Kantenbereinigung entfernt Artefakte wie `["...`, `"]`, `",`.
 
 - Android: `whisperAndroidLib` (`whisper.cpp/examples/whisper.android/lib/build.gradle`) auf echten Source-Build mit statischem ggml-Linking festgezogen (`-DBUILD_SHARED_LIBS=OFF`, `-DGGML_BACKEND_DL=OFF`), damit keine Restore-/Prebuilt-JNI-Artefakte fuer ggml mehr noetig sind.
 - Android: ggml-Kollisions-Workaround per `pickFirst` entfernt: `composeApp/build.gradle.kts` und `llama.cpp/examples/llama.android/lib/build.gradle.kts` nutzen kein `**/libggml*.so`-`pickFirst` mehr.

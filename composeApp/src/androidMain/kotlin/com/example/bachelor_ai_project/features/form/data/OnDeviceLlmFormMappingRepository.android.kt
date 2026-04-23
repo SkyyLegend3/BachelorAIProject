@@ -416,6 +416,7 @@ class OnDeviceLlmFormMappingRepository(
         Erlaubte Keys: ${questions.joinToString(", ") { it.id }}.
         Fuer Nicht-Namensfelder ganze, zusammenhaengende Antwortsaetze aus dem Transkript verwenden (maximal 220 Zeichen pro Feld).
         Name nur als Personenname.
+        Niemals Sprecher-Labels wie SPEAKER_00 oder Sprecher 1 als Feldwert verwenden.
         Unbekannte Felder weglassen.
         Beispiel: {$answersJsonTemplate}
         $orthographyInstruction
@@ -566,18 +567,23 @@ class OnDeviceLlmFormMappingRepository(
             .findAll(text)
             .forEach { match ->
                 val key = match.groupValues[1].trim().lowercase()
-                val value = match.groupValues[2].trim().trim('"')
+                val value = match.groupValues[2].trim()
                 if (value.isNotBlank()) lineBased[key] = value
             }
 
         if (lineBased.isNotEmpty()) return normalizeAnswers(lineBased)
 
         val inlineBased = mutableMapOf<String, String>()
-        Regex("""(?i)["']?($knownFieldRegexAlternation)["']?\s*[:=-]\s*([^,;\n]+)""")
+        Regex(
+            """(?i)["']?($knownFieldRegexAlternation)["']?\s*[:=-]\s*(?:"((?:\\.|[^"\\])*)"|'((?:\\.|[^'\\])*)'|([^;\n]+))"""
+        )
             .findAll(text)
             .forEach { match ->
                 val key = match.groupValues[1].trim().lowercase()
-                val value = match.groupValues[2].trim().trim('"')
+                val value = listOf(match.groupValues[2], match.groupValues[3], match.groupValues[4])
+                    .firstOrNull { it.isNotBlank() }
+                    .orEmpty()
+                    .trim()
                 if (value.isNotBlank()) inlineBased[key] = value
             }
 
@@ -594,7 +600,7 @@ class OnDeviceLlmFormMappingRepository(
         if (rawAnswers.isEmpty()) return emptyMap()
 
         return rawAnswers.mapNotNull { (rawKey, rawValue) ->
-            val value = trimTrailingLlmArtifacts(rawValue)
+            val value = trimLlmEdgeArtifacts(rawValue)
             if (value.isBlank()) return@mapNotNull null
 
             val keyTrimmed = rawKey.trim()
@@ -608,14 +614,16 @@ class OnDeviceLlmFormMappingRepository(
         }.toMap()
     }
 
-    private fun trimTrailingLlmArtifacts(rawValue: String): String {
+    private fun trimLlmEdgeArtifacts(rawValue: String): String {
         var cleaned = rawValue.trim()
         if (cleaned.isBlank()) return cleaned
 
-        // Entfernt haeufige JSON-Ausgabe-Artefakte am Feldende wie `",` oder `,"`.
+        // Entfernt haeufige JSON-/Listen-Artefakte an den Feldraendern (z. B. `["...",`).
         cleaned = cleaned
+            .replace(Regex("""^[\[{(]+\s*["']?\s*"""), "")
             .replace(Regex("""[\"']\s*[,;]\s*$"""), "")
             .replace(Regex("""[,;]\s*[\"']\s*$"""), "")
+            .replace(Regex("""\s*[\"'\]\})]+\s*$"""), "")
             .trim()
 
         return cleaned
@@ -691,6 +699,7 @@ class OnDeviceLlmFormMappingRepository(
         if (normalized.isBlank()) return false
 
         if (isNameField(field)) {
+            if (isSpeakerPlaceholderLike(trimmed)) return false
             val wordCount = trimmed.split(Regex("\\s+")).count { it.isNotBlank() }
             if (wordCount > 4 || trimmed.length > 64) return false
             if (trimmed.contains('?') || trimmed.contains('.') || trimmed.contains(':')) return false
@@ -704,10 +713,11 @@ class OnDeviceLlmFormMappingRepository(
     }
 
     private fun normalizeCandidateForField(field: FieldSpec, candidate: String): String {
+        val cleanedCandidate = trimLlmEdgeArtifacts(candidate)
         if (!isNameField(field)) {
-            return trimIrrelevantTailForField(field = field, candidate = candidate.trim())
+            return trimIrrelevantTailForField(field = field, candidate = cleanedCandidate)
         }
-        return extractNameFromText(candidate) ?: candidate.trim()
+        return extractNameFromText(cleanedCandidate) ?: cleanedCandidate
     }
 
     private fun trimIrrelevantTailForField(field: FieldSpec, candidate: String): String {
@@ -1105,6 +1115,7 @@ class OnDeviceLlmFormMappingRepository(
             .trim()
 
         if (cleaned.isBlank()) return null
+        if (isSpeakerPlaceholderLike(cleaned)) return null
 
         val parts = cleaned.split(" ").filter { it.isNotBlank() }
         if (parts.isEmpty() || parts.size > 3) return null
@@ -1113,6 +1124,17 @@ class OnDeviceLlmFormMappingRepository(
         return parts.joinToString(" ") { part ->
             part.lowercase().replaceFirstChar { ch -> ch.uppercase() }
         }
+    }
+
+    private fun isSpeakerPlaceholderLike(value: String): Boolean {
+        val trimmed = value.trim()
+        if (trimmed.isBlank()) return false
+
+        val directMatch = Regex("""(?i)^\[?\s*(speaker|sprecher)[_\-\s]*\d{1,3}\s*\]?$""")
+        if (directMatch.matches(trimmed)) return true
+
+        val normalized = normalizeKey(trimmed)
+        return Regex("""^(speaker|sprecher)\d{1,3}$""").matches(normalized)
     }
 
     private fun resolveLlmEngine(): OnDeviceLlmEngine? {
