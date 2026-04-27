@@ -99,7 +99,16 @@ class FormViewModel(
                 else
                     "Starte Cloud-Mapping..."
             )
-            _uiState.update { it.copy(isMappingLoading = true, mappingError = null, mappingSourceError = null) }
+            _uiState.update {
+                it.copy(
+                    isMappingLoading = true,
+                    mappingError = null,
+                    mappingSourceError = null,
+                    isSubmitting = false,
+                    submitError = null,
+                    isSubmitted = false,
+                )
+            }
 
             val result = withContext(Dispatchers.Default) {
                 MapTranscriptToFormUseCase(activeRepository()).invoke(response)
@@ -262,8 +271,32 @@ class FormViewModel(
                         entry
                     }
                 },
+                submitError = null,
+                isSubmitted = false,
             )
         }
+    }
+
+    fun submitForm() {
+        val current = _uiState.value
+        if (!current.isValid || current.isSubmitting) return
+
+        _uiState.update {
+            it.copy(
+                isSubmitting = true,
+                submitError = null,
+            )
+        }
+
+        // Aktuell kein Backend-Submit vorhanden: Erfolg lokal markieren.
+        _uiState.update {
+            it.copy(
+                isSubmitting = false,
+                isSubmitted = true,
+                submitError = null,
+            )
+        }
+        appendLog("Formular abgesendet")
     }
 
     fun runOnDeviceLlmTest() {

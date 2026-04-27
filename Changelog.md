@@ -1,5 +1,50 @@
 # Changelog
 
+## Stand: 2026-04-23
+
+## UI: Design-System aus Prototyp uebernommen (ohne Logik-/Datenfluss-Aenderungen)
+- Neues gemeinsames Compose-Design-System eingefuehrt:
+  - `composeApp/src/commonMain/kotlin/com/example/bachelor_ai_project/app/designsystem/BaTheme.kt`
+  - `composeApp/src/commonMain/kotlin/com/example/bachelor_ai_project/app/designsystem/BaComponents.kt`
+  - Enthalten sind Prototyp-nahe Tokens fuer Farben, Typografie, Shapes sowie wiederverwendbare UI-Bausteine (Card, Primary/Outlined Button, Divider, Section Label).
+- App-Layout visuell auf den Prototyp angepasst:
+  - `composeApp/src/commonMain/kotlin/com/example/bachelor_ai_project/app/App.kt`
+  - Neuer blauer Header, helles App-Background, aktualisierte Abstaende/Anordnung der Screen-Bloecke.
+- Recording-UI visuell umgestellt:
+  - `composeApp/src/commonMain/kotlin/com/example/bachelor_ai_project/features/recording/ui/RecordingScreen.kt`
+  - Buttons, Upload-Card, Fehlermeldungsdarstellung und Recording-Timer im neuen Designstil.
+- Transkriptions-UI visuell umgestellt:
+  - `composeApp/src/commonMain/kotlin/com/example/bachelor_ai_project/features/transcription/ui/TranscriptionScreen.kt`
+  - Loading-/Log-/Ergebnisdarstellung in Cards mit neuen Farben/Typografie.
+- Formular-UI visuell umgestellt:
+  - `composeApp/src/commonMain/kotlin/com/example/bachelor_ai_project/features/form/ui/FormScreen.kt`
+  - `composeApp/src/commonMain/kotlin/com/example/bachelor_ai_project/features/form/ui/FormQuestionItem.kt`
+  - `composeApp/src/commonMain/kotlin/com/example/bachelor_ai_project/features/form/ui/TranscriptPreview.kt`
+  - Mode-Umschalter, Statusindikatoren, Eingabefelder, Logs und Success-Hinweis im neuen System.
+- Wichtig: Es wurden keine Aenderungen an UseCases, Repositories, ViewModel-Flows oder Datenverarbeitung vorgenommen; nur UI/Styling/Komposition.
+- Verifiziert mit Build:
+  - `./gradlew :composeApp:compileDebugKotlinAndroid -q` ✅
+
+## UI: Nachtraegliche Korrekturen und Feinschliff (2026-04-23)
+- Header-Status rechts oben als LLM-Status finalisiert (`App.kt`):
+  - Punkt + Text zeigen jetzt den LLM-Zustand an.
+  - Statuslogik getrennt in `LLM bereit`, `LLM-Model laedt`, `LLM-Model gefunden` (konfiguriert, aber nicht geladen) und `LLM-Model nicht gefunden`.
+  - Alte LLM-Statuszeile im Formular wurde entfernt.
+- Formular-Submit-Flow repariert (`FormScreen.kt`, `FormViewModel.kt`):
+  - `Absenden` fuehrt wieder eine echte Aktion aus (`submitForm()`), sodass `isSubmitting`/`isSubmitted` korrekt aktualisiert werden.
+  - Beim neuen Transcript-Mapping wird der alte Submit-Zustand (`isSubmitting`, `submitError`, `isSubmitted`) zurueckgesetzt, damit kein veralteter Erfolgshinweis stehen bleibt.
+- Recording-Upload-Fallback korrigiert (`RecordingScreen.kt`):
+  - Datei-Upload ist nicht mehr an Mikrofon-Permission gebunden und funktioniert weiterhin bei verweigertem Mic-Zugriff (solange nicht aufgenommen/geladen wird).
+- Transkript-Anzeige chronologisch korrigiert (`TranscriptionScreen.kt`):
+  - Sprecherbloecke werden in Transcript-Reihenfolge als zusammenhaengende Speaker-Runs angezeigt statt alphabetisch nach Sprecher gruppiert.
+- Formular-UI weiter an Prototyp angepasst:
+  - Horizontales Content-Padding reduziert, damit das Formular breiter ist (`App.kt`).
+  - Divider zwischen `Cloud/On Device` und `On-Device Rechtschreibkorrektur` ergaenzt (`FormScreen.kt`).
+  - `On-Device Rechtschreibkorrektur` wird nur angezeigt, wenn `On Device` aktiv ist (`FormScreen.kt`).
+  - Eingabefelder nutzen den hellblauen transparenten Hintergrund nun auch im Error-Status (betrifft damit auch Pflichtfelder) (`FormQuestionItem.kt`).
+- Verifiziert mit Build:
+  - `./gradlew :composeApp:compileDebugKotlinAndroid -q` ✅
+
 ## Stand: 2026-03-23
 
 ## Bugfix: AudioFilePicker final stabil auf Android + iOS
@@ -352,4 +397,3 @@
 - Android: On-Device-Statusanzeige praezisiert (`FormUiState.kt`, `FormViewModel.kt`, `FormScreen.kt`) mit separatem Zustand `isOnDeviceLlmModelConfigured`; UI zeigt bei gefundenem, aber noch nicht geladenem Modell jetzt einen Zwischenstatus statt faelschlich "LLM-Model nicht gefunden".
 - Android: Proaktiver Warmup im `FormViewModel`-Init aktiviert, damit Modellladen frueher startet und der Status schneller auf "bereit" wechselt.
 - Android: Llama-Warmup gegen fehlerhafte Engine-Zustaende gehaertet (`LlamaCppOnDeviceLlmEngine.android.kt`): vor `configureRuntime` wird ein vorhandener `Error`-State per `cleanUp()` zurueckgesetzt und auf `Initialized` gewartet, damit der Fehler "Cannot configure runtime in Error!" nicht mehr den Modell-Load blockiert.
-

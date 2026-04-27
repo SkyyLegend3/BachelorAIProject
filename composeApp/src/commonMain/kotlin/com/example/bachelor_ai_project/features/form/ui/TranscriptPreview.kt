@@ -14,17 +14,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
+import com.example.bachelor_ai_project.app.designsystem.BaColors
+import com.example.bachelor_ai_project.app.designsystem.BaSectionLabel
 import com.example.bachelor_ai_project.features.form.domain.SpeakerBlock
 import kotlin.math.roundToInt
 
-/**
- * Zeigt alle [SpeakerBlock]s des gemappten Transkripts als lesbare Liste an.
- *
- * Jeder Block zeigt:
- * - Sprecher-Label (z.B. "SPEAKER_00")
- * - Zeitstempel (Start → Ende)
- * - Vollständigen Redetext
- */
 @Composable
 fun TranscriptPreview(
     blocks: List<SpeakerBlock>,
@@ -34,11 +28,7 @@ fun TranscriptPreview(
         modifier = modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Text(
-            text = "Transkript",
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        BaSectionLabel(text = "Transkript")
 
         blocks.forEach { block ->
             SpeakerBlockItem(block = block)
@@ -55,7 +45,7 @@ private fun SpeakerBlockItem(
         modifier = modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(8.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .background(BaColors.Neutral50)
             .padding(horizontal = 12.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
@@ -67,28 +57,25 @@ private fun SpeakerBlockItem(
             Text(
                 text = block.speaker.ifBlank { "Unbekannt" },
                 style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.primary,
+                color = BaColors.Primary,
             )
             Text(
-                text = "${block.startSeconds.toTimestamp()} → ${block.endSeconds.toTimestamp()}",
+                text = "${block.startSeconds.toTimestamp()} -> ${block.endSeconds.toTimestamp()}",
                 style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = BaColors.TextSecondary,
             )
         }
         Text(
             text = block.text,
             style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurface,
+            color = BaColors.TextPrimary,
         )
     }
 }
 
-/** Formatiert Sekunden als `mm:ss`. */
 private fun Double.toTimestamp(): String {
     val total = this.roundToInt()
     val minutes = total / 60
     val seconds = total % 60
     return "$minutes:${seconds.toString().padStart(2, '0')}"
 }
-
-
