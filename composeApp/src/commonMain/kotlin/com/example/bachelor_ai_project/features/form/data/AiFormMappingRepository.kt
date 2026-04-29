@@ -85,9 +85,8 @@ class AiFormMappingRepository(
             in strukturierte Formularfelder extrahiert. Das Gespräch ist ein Feedbackgespräch
             zwischen zwei Personen.
             
-            Antworte AUSSCHLIESSLICH mit einem validen JSON-Objekt in GENAU diesem Format,
-            ohne Markdown, ohne Code-Blöcke, ohne Erklärungen:
-            {"answers": {"feldId": "extrahierter Text"}}
+            Zu befüllende Formularfelder:
+            $fieldsDescription
             
             Regeln:
             - Übernehme nur Informationen, die explizit im Transkript stehen.
@@ -96,8 +95,9 @@ class AiFormMappingRepository(
             - Antworte auf Deutsch.
             - Nur das JSON-Objekt zurückgeben, KEIN weiterer Text.
             
-            Zu befüllende Formularfelder:
-            $fieldsDescription
+            Antworte AUSSCHLIESSLICH mit einem validen JSON-Objekt in GENAU diesem Format,
+            ohne Markdown, ohne Code-Blöcke, ohne Erklärungen:
+            {"answers": {"feldId": "extrahierter Text"}}
         """.trimIndent()
 
         val userMessage = """

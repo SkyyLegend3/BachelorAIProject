@@ -87,8 +87,6 @@ kotlin {
             implementation(libs.androidx.activity.compose)
             implementation(libs.ktor.client.okhttp)
             implementation(project(":whisperAndroidLib"))
-            // Reihenfolge bewusst: bei kollidierenden ggml-Shared-Libs soll die
-            // llamaAndroidLib-Variante im finalen APK bevorzugt werden.
             implementation(project(":llamaAndroidLib"))
         }
         iosMain.dependencies {
