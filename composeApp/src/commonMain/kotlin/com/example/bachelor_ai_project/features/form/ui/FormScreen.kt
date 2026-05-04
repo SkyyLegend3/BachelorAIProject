@@ -1,7 +1,7 @@
 package com.example.bachelor_ai_project.features.form.ui
 
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -11,13 +11,14 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Switch
-import androidx.compose.material3.Surface
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -25,20 +26,15 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import com.example.bachelor_ai_project.app.designsystem.BaCard
+import com.example.bachelor_ai_project.app.designsystem.BaColors
+import com.example.bachelor_ai_project.app.designsystem.BaDivider
+import com.example.bachelor_ai_project.app.designsystem.BaPrimaryButton
+import com.example.bachelor_ai_project.app.designsystem.BaSectionLabel
 import com.example.bachelor_ai_project.features.form.domain.FormAutomationMode
 import com.example.bachelor_ai_project.features.form.presentation.FormViewModel
 
-/**
- * Haupt-Composable für das Feedback-Formular.
- *
- * Zeigt alle konfigurierten Fragen als editierbare Felder an.
- * Neue Fragen werden automatisch gerendert, sobald sie im Form-Definition-Provider
- * eingetragen sind.
- * Oberhalb der Felder wird das Transkript als Sprecher-Blöcke angezeigt,
- * sofern eines vorliegt.
- */
 @Composable
 fun FormScreen(
     viewModel: FormViewModel,
@@ -47,23 +43,16 @@ fun FormScreen(
 ) {
     val state by viewModel.uiState.collectAsState()
 
-    Surface(
-        modifier = modifier.fillMaxWidth(),
-        color = MaterialTheme.colorScheme.surface,
-        tonalElevation = 1.dp,
-        shape = MaterialTheme.shapes.medium,
-    ) {
+    BaCard(modifier = modifier.fillMaxWidth()) {
         Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Text(
                 text = "Feedback-Formular",
                 style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.primary,
+                color = BaColors.Primary,
             )
 
             Row(
@@ -86,48 +75,18 @@ fun FormScreen(
                 )
             }
 
-            if (state.automationMode == FormAutomationMode.ON_DEVICE && state.supportsOnDeviceMapping) {
-                val indicatorColor = when {
-                    state.isOnDeviceLlmModelLoading -> Color(0xFFF9A825)
-                    state.isOnDeviceLlmModelReady -> Color(0xFF2E7D32)
-                    state.isOnDeviceLlmModelConfigured -> Color(0xFFEF6C00)
-                    else -> Color(0xFFC62828)
-                }
-                val indicatorText = when {
-                    state.isOnDeviceLlmModelLoading -> "Model wird geladen"
-                    state.isOnDeviceLlmModelReady -> "LLM-Model bereit"
-                    state.isOnDeviceLlmModelConfigured -> "LLM-Model gefunden (noch nicht geladen)"
-                    else -> "LLM-Model nicht gefunden"
-                }
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(10.dp)
-                            .clip(CircleShape)
-                            .background(indicatorColor)
-                    )
-                    Text(
-                        text = indicatorText,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = Color.Black,
-                    )
-                }
-            }
-
             if (!state.supportsOnDeviceMapping) {
                 Text(
                     text = "On-Device-Mapping ist aktuell nur auf Android verfuegbar.",
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = BaColors.TextSecondary,
+                    modifier = Modifier.fillMaxWidth(),
                 )
             }
 
-            if (state.supportsOnDeviceMapping) {
+            if (state.supportsOnDeviceMapping && state.automationMode == FormAutomationMode.ON_DEVICE) {
+                BaDivider(modifier = Modifier.fillMaxWidth())
+
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
@@ -137,32 +96,44 @@ fun FormScreen(
                         Text(
                             text = "On-Device Rechtschreibkorrektur",
                             style = MaterialTheme.typography.bodyMedium,
+                            color = BaColors.TextPrimary,
                         )
                         Text(
                             text = "Korrigiert lautnahe Whisper-Fehler vor dem Befuellen.",
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            color = BaColors.TextSecondary,
                         )
                     }
+
                     Switch(
                         checked = state.onDeviceOrthographyCorrectionEnabled,
                         onCheckedChange = viewModel::setOnDeviceOrthographyCorrectionEnabled,
-                        enabled = state.automationMode == FormAutomationMode.ON_DEVICE,
+                        enabled = true,
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = BaColors.White,
+                            checkedTrackColor = BaColors.Primary,
+                            uncheckedThumbColor = BaColors.White,
+                            uncheckedTrackColor = BaColors.BorderDefault,
+                        ),
                     )
                 }
             }
 
-            // ── Transkript-Vorschau ────────────────────────────────────────────
             if (state.isMappingLoading) {
                 Row(
+                    modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(18.dp),
+                        strokeWidth = 2.dp,
+                        color = BaColors.Primary,
+                    )
                     Text(
-                        text = "Transkript wird verarbeitet…",
+                        text = "Transkript wird verarbeitet...",
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = BaColors.TextSecondary,
                     )
                 }
             }
@@ -172,16 +143,12 @@ fun FormScreen(
                     modifier = Modifier.fillMaxWidth(),
                     verticalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
-                    Text(
-                        text = "Prozess-Log",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                    BaSectionLabel(text = "Prozess-Log")
                     state.mappingLogs.takeLast(6).forEach { line ->
                         Text(
                             text = "• $line",
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            color = BaColors.TextSecondary,
                         )
                     }
                 }
@@ -190,25 +157,26 @@ fun FormScreen(
             state.mappingSourceError?.let { sourceError ->
                 Text(
                     text = sourceError,
-                    color = MaterialTheme.colorScheme.error,
+                    color = BaColors.Error,
                     style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.fillMaxWidth(),
                 )
             }
 
             state.mappingError?.let { error ->
                 Text(
                     text = error,
-                    color = MaterialTheme.colorScheme.error,
+                    color = BaColors.Error,
                     style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.fillMaxWidth(),
                 )
             }
 
             if (state.hasTranscript) {
                 TranscriptPreview(blocks = state.speakerBlocks)
-                HorizontalDivider()
+                BaDivider(modifier = Modifier.padding(top = 2.dp))
             }
 
-            // ── Formularfelder ─────────────────────────────────────────────────
             state.entries.forEach { entry ->
                 FormQuestionItem(
                     entry = entry,
@@ -219,19 +187,23 @@ fun FormScreen(
             }
 
             if (state.supportsOnDeviceMapping && state.automationMode == FormAutomationMode.ON_DEVICE) {
-                Button(
+                BaPrimaryButton(
                     onClick = viewModel::runOnDeviceLlmTest,
                     enabled = !state.isLlmTestRunning,
                     modifier = Modifier.fillMaxWidth(),
                 ) {
-                    Text(if (state.isLlmTestRunning) "LLM Test laeuft..." else "LLM Test")
+                    Text(
+                        if (state.isLlmTestRunning) "LLM Test laeuft..." else "LLM Test",
+                        style = MaterialTheme.typography.labelLarge,
+                    )
                 }
 
                 state.llmTestSuccess?.let { success ->
                     Text(
                         text = if (success) "LLM funktioniert" else "LLM fail",
-                        color = if (success) Color(0xFF2E7D32) else MaterialTheme.colorScheme.error,
+                        color = if (success) BaColors.Success else BaColors.Error,
                         style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.fillMaxWidth(),
                     )
                 }
             }
@@ -239,27 +211,53 @@ fun FormScreen(
             state.submitError?.let { error ->
                 Text(
                     text = error,
-                    color = MaterialTheme.colorScheme.error,
+                    color = BaColors.Error,
                     style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.fillMaxWidth(),
                 )
             }
 
-            Spacer(Modifier.height(4.dp))
+            Spacer(Modifier.height(2.dp))
 
-            Button(
-                onClick = { onSubmit?.invoke() },
+            BaPrimaryButton(
+                onClick = {
+                    if (onSubmit != null) {
+                        onSubmit()
+                    } else {
+                        viewModel.submitForm()
+                    }
+                },
                 enabled = state.isValid && !state.isSubmitting,
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                Text(if (state.isSubmitting) "Wird gesendet…" else "Absenden")
+                Text(
+                    if (state.isSubmitting) "Wird gesendet..." else "Absenden",
+                    style = MaterialTheme.typography.labelLarge,
+                )
             }
 
             if (state.isSubmitted) {
-                Text(
-                    text = "✅ Formular erfolgreich abgesendet.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.primary,
-                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(BaColors.SuccessBg)
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(8.dp)
+                            .clip(CircleShape)
+                            .background(BaColors.Success),
+                    )
+                    Text(
+                        text = "Formular erfolgreich abgesendet.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = BaColors.Success,
+                    )
+                }
             }
         }
     }
@@ -278,17 +276,29 @@ private fun ModeButton(
             onClick = onClick,
             modifier = modifier,
             enabled = enabled,
+            shape = RoundedCornerShape(8.dp),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = BaColors.Primary,
+                contentColor = BaColors.White,
+                disabledContainerColor = BaColors.BorderDefault,
+                disabledContentColor = BaColors.TextDisabled,
+            ),
         ) {
-            Text(text)
+            Text(text, style = MaterialTheme.typography.labelLarge)
         }
     } else {
         OutlinedButton(
             onClick = onClick,
             modifier = modifier,
             enabled = enabled,
+            shape = RoundedCornerShape(8.dp),
+            colors = ButtonDefaults.outlinedButtonColors(
+                containerColor = BaColors.White,
+                contentColor = BaColors.Primary,
+                disabledContentColor = BaColors.TextDisabled,
+            ),
         ) {
-            Text(text)
+            Text(text, style = MaterialTheme.typography.labelLarge)
         }
     }
 }
-

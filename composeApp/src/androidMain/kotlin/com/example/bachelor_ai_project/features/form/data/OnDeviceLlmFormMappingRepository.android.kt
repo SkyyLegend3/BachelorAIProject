@@ -409,18 +409,26 @@ class OnDeviceLlmFormMappingRepository(
         }
 
         val systemPrompt = """
-        Gib genau eine JSON-Zeile zurueck.
-        Kein Markdown. Kein Zusatztext.
-        Nutze nur sichere Infos aus dem Transkript.
-        Antworte mit einem flachen JSON-Objekt.
-        Erlaubte Keys: ${questions.joinToString(", ") { it.id }}.
-        Fuer Nicht-Namensfelder ganze, zusammenhaengende Antwortsaetze aus dem Transkript verwenden (maximal 220 Zeichen pro Feld).
-        Name nur als Personenname.
-        Niemals Sprecher-Labels wie SPEAKER_00 oder Sprecher 1 als Feldwert verwenden.
-        Unbekannte Felder weglassen.
-        Beispiel: {$answersJsonTemplate}
-        $orthographyInstruction
-        """.trimIndent()
+            Rolle: Du bist ein JSON-Extraktor fuer ein Feedback-Formular
+            Ausgabevorschrift (SEHR WICHTIG):
+            - Gib GENAU EINE ZEILE valides JSON zurueck.
+            - Kein Markdown, keine Backticks, keine Erklaerung, kein Zusatztext.
+            - Nutze EXAKT dieses Schema:
+              {"answers":{$answersJsonTemplate}}
+            - Die Keys muessen EXAKT den Formularfeld-IDs entsprechen.
+            - Wenn Information fehlt: leerer String 
+            Extraktionsregeln:
+            - Nutze nur explizite Informationen aus dem Transkript.
+            - Erfinde nichts.
+            - Außer bei Namesfeldern immer ganze Saetze oder klare Phrasen als Werte, NICHT nur einzelne Woerter.
+            - Sprache der Werte: Deutsch.
+            - Halte Werte kurz und konkret (maximal 220 Zeichen pro Feld).
+            - Wenn im Dialog eine Frage gestellt wird (z.B. vom Interviewer), uebernimm als Feldwert die inhaltliche Antwort des Gegenuebers, NICHT die Frage selbst.
+            - Frageformulierungen koennen variieren. Ordne nach inhaltlicher Bedeutung zur passenden Formularfrage zu.
+            - Fuer Felder, die nach Name fragen, gib nur den Namen zurueck (ohne Zusatzsaetze).
+            - Die Antwort darf nicht exakt dem Wortlaut der Frage entsprechen (Sonst ist es wahrscheinlich die Frage selbst)
+            $orthographyInstruction
+            """.trimIndent()
 
         val userPrompt = """
         Felder:
