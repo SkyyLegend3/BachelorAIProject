@@ -1,5 +1,22 @@
 # Changelog
 
+## Stand: 2026-05-04
+
+## Android: On-Device-Model-Load gegen Speicherabsturz gehaertet
+- `llama.cpp/examples/llama.android/lib/src/main/cpp/ai_chat.cpp` setzt beim Modellladen jetzt explizit `use_extra_bufts = false`, um zusaetzliche CPU-Repack-Buffer (hoher RAM-Peak bei grossen Gemma4-GGUFs) auf Mobilgeraeten zu vermeiden.
+- Beide Native-Load-Pfade loggen nun Modellgroesse (`model_size_bytes`) und den aktiven `use_extra_bufts`-Wert fuer schnellere Diagnose in Logcat.
+- `composeApp/src/androidMain/kotlin/com/example/bachelor_ai_project/features/form/data/DirectLlamaOnDeviceLlmEngine.android.kt` prueft vor `bridge.loadModel(...)` ein konservatives Memory-Budget gegen `ActivityManager.MemoryInfo`.
+- Bei voraussichtlich zu grossem Modell wird nun kontrolliert mit klarer Fehlermeldung abgebrochen (statt potenziellem Prozessabsturz/LMKD-Kill).
+
+## Android: On-Device-Llama auf gemma4-faehigen Buildpfad umgestellt
+- `llama.cpp/examples/llama.android/lib/src/main/cpp/CMakeLists.txt` priorisiert jetzt `third_party/llama.cpp` als Quelle (danach Root/`iosApp` als Fallback), damit aktuelle llama.cpp-Staende genutzt werden koennen.
+- CMake-Linking wurde kompatibel fuer alte und neue llama.cpp-Targetnamen gemacht (`llama-common` vs `common`).
+- Include-Pfade im Android-Native-Target um `vendor` erweitert, damit neue Header-Abhaengigkeiten (z. B. `nlohmann/json_fwd.hpp`) korrekt gefunden werden.
+- Neues Hilfsskript `scripts/update_llama_cpp_android.sh` hinzugefuegt, um die upstream-Quelle in `third_party/llama.cpp` reproduzierbar zu klonen/aktualisieren.
+- `scripts/README.md` um die Nutzung des Update-Skripts erweitert.
+- Verifiziert mit Build:
+  - `./gradlew :llamaAndroidLib:assembleDebug --no-daemon` ✅
+
 ## Stand: 2026-04-23
 
 ## UI: Design-System aus Prototyp uebernommen (ohne Logik-/Datenfluss-Aenderungen)

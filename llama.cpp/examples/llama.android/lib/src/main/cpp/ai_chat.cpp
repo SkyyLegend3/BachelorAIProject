@@ -5,6 +5,7 @@
 #include <iomanip>
 #include <cmath>
 #include <string>
+#include <sys/stat.h>
 #include <unistd.h>
 #include <sampling.h>
 
@@ -53,6 +54,22 @@ static std::atomic_bool                   g_direct_cancel_requested{false};
 static bool                               g_batch_initialized = false;
 static int                                g_direct_batch_capacity = 0;
 
+static long long file_size_bytes(const char *path) {
+    if (path == nullptr) {
+        return -1;
+    }
+    struct stat st{};
+    if (stat(path, &st) != 0) {
+        return -1;
+    }
+    return (long long) st.st_size;
+}
+
+static void configure_mobile_model_params(llama_model_params &params) {
+    // Reduziert den RAM-Peak auf mobilen Geraeten (kein zusaetzliches CPU-Repacking).
+    params.use_extra_bufts = false;
+}
+
 extern "C"
 JNIEXPORT void JNICALL
 Java_com_arm_aichat_internal_InferenceEngineImpl_init(JNIEnv *env, jobject /*unused*/, jstring nativeLibDir) {
@@ -77,8 +94,11 @@ extern "C"
 JNIEXPORT jint JNICALL
 Java_com_arm_aichat_internal_InferenceEngineImpl_load(JNIEnv *env, jobject, jstring jmodel_path) {
     llama_model_params model_params = llama_model_default_params();
+    configure_mobile_model_params(model_params);
 
     const auto *model_path = env->GetStringUTFChars(jmodel_path, 0);
+    const long long bytes = file_size_bytes(model_path);
+    LOGi("%s: model_size_bytes=%lld use_extra_bufts=%d", __func__, bytes, model_params.use_extra_bufts ? 1 : 0);
     LOGd("%s: Loading model from: \n%s\n", __func__, model_path);
 
     auto *model = llama_model_load_from_file(model_path, model_params);
@@ -715,6 +735,9 @@ Java_com_arm_aichat_direct_DirectLlamaBridge_nativeLoadModel(
     const char *model_path = env->GetStringUTFChars(modelPath, nullptr);
 
     llama_model_params model_params = llama_model_default_params();
+    configure_mobile_model_params(model_params);
+    const long long bytes = file_size_bytes(model_path);
+    LOGi("DIRECT load: model_size_bytes=%lld use_extra_bufts=%d", bytes, model_params.use_extra_bufts ? 1 : 0);
     g_model = llama_model_load_from_file(model_path, model_params);
 
     env->ReleaseStringUTFChars(modelPath, model_path);

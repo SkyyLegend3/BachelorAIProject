@@ -1,5 +1,14 @@
 # Scripts
 
+## Android llama.cpp Source Update (gemma4)
+
+Der Android-Native-Build nutzt bevorzugt `third_party/llama.cpp`.
+Mit diesem Skript wird ein aktueller upstream-Stand (inkl. gemma4-Support) geklont/aktualisiert:
+
+```bash
+./scripts/update_llama_cpp_android.sh
+```
+
 ## Android On-Device LLM Timing
 
 Dieses Projekt loggt Inferenzzeiten bereits zur Laufzeit ueber:

@@ -32,15 +32,32 @@ if(DEFINED ANDROID_ABI)
     endif()
 endif()
 
-# Primaer das erwartete Repo-Layout nutzen; falls die Root-Quelle ausgeduennt ist,
-# auf den vollstaendigen iOS-Clone im Workspace zurueckfallen.
-set(LLAMA_SRC ${CMAKE_CURRENT_LIST_DIR}/../../../../../../)
-if(NOT EXISTS ${LLAMA_SRC}/CMakeLists.txt)
-    set(LLAMA_SRC ${CMAKE_CURRENT_LIST_DIR}/../../../../../../../iosApp/llama.cpp)
+# Ermittele Projektwurzel von .../llama.cpp/examples/llama.android/lib/src/main/cpp aus.
+get_filename_component(PROJECT_ROOT ${CMAKE_CURRENT_LIST_DIR}/../../../../../../../ ABSOLUTE)
+
+# Quellen-Prioritaet:
+# 1) third_party/llama.cpp (aktuelle, explizit gepflegte Quelle; gemma4-faehig)
+# 2) llama.cpp im Root
+# 3) iosApp/llama.cpp als Legacy-Fallback
+set(LLAMA_SRC_CANDIDATES
+        ${PROJECT_ROOT}/third_party/llama.cpp
+        ${CMAKE_CURRENT_LIST_DIR}/../../../../../../
+        ${PROJECT_ROOT}/iosApp/llama.cpp
+)
+
+set(LLAMA_SRC "")
+foreach(candidate IN LISTS LLAMA_SRC_CANDIDATES)
+    if(EXISTS ${candidate}/CMakeLists.txt)
+        set(LLAMA_SRC ${candidate})
+        break()
+    endif()
+endforeach()
+
+if(LLAMA_SRC STREQUAL "")
+    message(FATAL_ERROR "Keine gueltige llama.cpp-Quelle gefunden (third_party, Root, iosApp).")
 endif()
-if(NOT EXISTS ${LLAMA_SRC}/CMakeLists.txt)
-    message(FATAL_ERROR "Keine gueltige llama.cpp-Quelle gefunden (weder Root noch iosApp/llama.cpp).")
-endif()
+
+message(STATUS "Using llama.cpp source: ${LLAMA_SRC}")
 add_subdirectory(${LLAMA_SRC} build-llama)
 
 add_library(${CMAKE_PROJECT_NAME} SHARED
@@ -55,12 +72,21 @@ target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
         ${LLAMA_SRC}
         ${LLAMA_SRC}/common
+        ${LLAMA_SRC}/vendor
         ${LLAMA_SRC}/include
         ${LLAMA_SRC}/ggml/include
         ${LLAMA_SRC}/ggml/src)
 
+if(TARGET llama-common)
+    set(LLAMA_COMMON_TARGET llama-common)
+elseif(TARGET common)
+    set(LLAMA_COMMON_TARGET common)
+else()
+    message(FATAL_ERROR "Kein kompatibles llama-common/common Target gefunden.")
+endif()
+
 target_link_libraries(${CMAKE_PROJECT_NAME}
         llama
-        common
+        ${LLAMA_COMMON_TARGET}
         android
         log)

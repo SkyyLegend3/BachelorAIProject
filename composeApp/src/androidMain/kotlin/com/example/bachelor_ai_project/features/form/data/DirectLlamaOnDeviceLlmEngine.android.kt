@@ -1,5 +1,6 @@
 package com.example.bachelor_ai_project.features.form.data
 
+import android.app.ActivityManager
 import com.arm.aichat.direct.DirectLlamaBridge
 import com.example.bachelor_ai_project.core.result.AppResult
 import com.example.bachelor_ai_project.core.result.runCatchingResult
@@ -82,6 +83,7 @@ class DirectLlamaOnDeviceLlmEngine(
             try {
                 val effectiveModelPath = resolveModelPathForNativeAccess()
                 ensureModelFileReadable(effectiveModelPath)
+                enforceLikelyMemoryBudget(effectiveModelPath)
 
                 bridge.ensureInitialized()
                 bridge.loadModel(
@@ -133,6 +135,42 @@ class DirectLlamaOnDeviceLlmEngine(
         require(file.canRead()) { "Llama model is not readable: $path" }
     }
 
+    private fun enforceLikelyMemoryBudget(path: String) {
+        val file = File(path)
+        val modelBytes = file.length().coerceAtLeast(1L)
+        val activityManager = appContext.getSystemService(ActivityManager::class.java) ?: return
+        val memInfo = ActivityManager.MemoryInfo().also(activityManager::getMemoryInfo)
+
+        val estimatedNativeBytes = estimateNativeFootprintBytes(modelBytes)
+        val allowedByTotalMem = (memInfo.totalMem * MAX_MODEL_FOOTPRINT_SHARE_OF_TOTAL_MEM).toLong()
+        val rejectByTotalMem = memInfo.totalMem > 0 && estimatedNativeBytes > allowedByTotalMem
+        val rejectByLowMemState = memInfo.lowMemory && estimatedNativeBytes > memInfo.availMem
+
+        if (rejectByTotalMem || rejectByLowMemState) {
+            val message = buildString {
+                append("LLM model likely too large for this device runtime: ")
+                append("model=")
+                append(formatGiB(modelBytes))
+                append(" GiB, estimated_native_peak=")
+                append(formatGiB(estimatedNativeBytes))
+                append(" GiB, total_mem=")
+                append(formatGiB(memInfo.totalMem))
+                append(" GiB, avail_mem=")
+                append(formatGiB(memInfo.availMem))
+                append(" GiB. Use a smaller GGUF (z. B. Q2/Q3) on this device.")
+            }
+            throw IllegalStateException(message)
+        }
+    }
+
+    private fun estimateNativeFootprintBytes(modelBytes: Long): Long {
+        // Faustregel fuer mobile llama.cpp-Loads: mmap + optionale interne Repack-/Workspace-Peaks + Reserve.
+        val modelPlusPeakFactor = (modelBytes * 17L) / 10L // ~1.7x
+        return modelPlusPeakFactor + EXTRA_RUNTIME_HEADROOM_BYTES
+    }
+
+    private fun formatGiB(bytes: Long): String = "%.2f".format(bytes.toDouble() / BYTES_PER_GIB)
+
     private suspend fun recoverAfterFailure(reason: String) {
         mutex.withLock {
             println("DEBUG DirectLlamaOnDeviceLlmEngine: recovery reason=$reason")
@@ -147,5 +185,8 @@ class DirectLlamaOnDeviceLlmEngine(
 
     private companion object {
         private const val DIRECT_ERROR_PREFIX = "__DIRECT_LLM_ERROR__:"
+        private const val BYTES_PER_GIB = 1024.0 * 1024.0 * 1024.0
+        private const val MAX_MODEL_FOOTPRINT_SHARE_OF_TOTAL_MEM = 0.75
+        private const val EXTRA_RUNTIME_HEADROOM_BYTES = 384L * 1024L * 1024L
     }
 }
