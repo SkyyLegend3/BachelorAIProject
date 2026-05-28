@@ -1,6 +1,5 @@
 # Doku — Projektübersicht, Architektur und Entwicklerhinweise
 
-Letzte Aktualisierung: 2026-03-23
 
 Zweck
 -------
@@ -129,11 +128,6 @@ Build & Run (Kurzbefehle)
   ./gradlew :composeApp:assembleDebug
   ```
 - iOS: Öffne `iosApp/iosApp.xcodeproj` in Xcode und starte das Target `iosApp` (oder nutze die im Projekt konfigurierten Schemes).
-
-Testing
---------
-- Unit-Tests: Schreibe Tests für `domain`/`usecase`-Logik in `commonTest`.
-- Integration: Manuelles Testen für On-Device Pfade (benötigen lokal verfügbare Modelle und ggf. Geräte/Sim). Verwende kleine Modelle für schnelle Iteration.
 
 Hinweise für Entwickler
 -----------------------
